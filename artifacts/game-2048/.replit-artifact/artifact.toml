@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "2048 + Graph"
+version = "1.0.0"
+id = "artifacts/game-2048"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 26141
+
+[services.development]
+run = "pnpm --filter @workspace/game-2048 run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/game-2048", "run", "build" ]
+publicDir = "artifacts/game-2048/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "26141"
+BASE_PATH = "/"
