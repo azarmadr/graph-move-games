@@ -15,7 +15,8 @@ const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
   2048: { bg: "#edc22e", fg: "#f9f6f2" },
 };
 
-function drawPlaceholderBoard(canvas: HTMLCanvasElement) {
+/* ── Board renderer ────────────────────────────────────────────── */
+function drawBoard(canvas: HTMLCanvasElement, board: number[][]) {
   const ctx = canvas.getContext("2d")!;
   const size = canvas.width;
   const padding = 12;
@@ -27,16 +28,9 @@ function drawPlaceholderBoard(canvas: HTMLCanvasElement) {
   ctx.roundRect(0, 0, size, size, 8);
   ctx.fill();
 
-  const sampleBoard = [
-    [2, 4, 8, 16],
-    [0, 0, 2, 32],
-    [0, 0, 0, 4],
-    [0, 0, 0, 2],
-  ];
-
   for (let r = 0; r < 4; r++) {
     for (let c = 0; c < 4; c++) {
-      const val = sampleBoard[r][c];
+      const val = board[r][c];
       const x = padding + c * (cellSize + gap);
       const y = padding + r * (cellSize + gap);
       const colors = TILE_COLORS[val] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
@@ -58,7 +52,17 @@ function drawPlaceholderBoard(canvas: HTMLCanvasElement) {
   }
 }
 
-function drawPlaceholderGraph(canvas: HTMLCanvasElement) {
+/* ── Focused graph renderer (local neighborhood) ───────────────── */
+interface NodeData {
+  id: string;
+  label: string;
+  board: number[][];
+  isCurrent: boolean;
+  edgeColor: string;
+  edgeLabel?: string;
+}
+
+function drawFocusedGraph(canvas: HTMLCanvasElement, currentBoard: number[][]) {
   const ctx = canvas.getContext("2d")!;
   const w = canvas.width;
   const h = canvas.height;
@@ -66,66 +70,168 @@ function drawPlaceholderGraph(canvas: HTMLCanvasElement) {
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, w, h);
 
-  const nodes = [
-    { x: w / 2, y: 60, label: "start", color: "#4cc9f0" },
-    { x: w / 2 - 100, y: 160, label: "→ right", color: "#f72585" },
-    { x: w / 2 + 80, y: 160, label: "→ up", color: "#7209b7" },
-    { x: w / 2 - 100, y: 270, label: "spawn", color: "#3a0ca3" },
-    { x: w / 2 + 80, y: 270, label: "spawn", color: "#3a0ca3" },
+  /* Build a plausible 2-deep neighborhood around the current board */
+  const nodes: NodeData[] = [
+    // Predecessors (above current)
+    { id: "p0", label: "start", board: sampleStart(), isCurrent: false, edgeColor: "#4cc9f0", edgeLabel: "spawn" },
+    // Current node (center)
+    { id: "c0", label: "current", board: currentBoard, isCurrent: true, edgeColor: "#4cc9f0" },
+    // Siblings (same predecessor, different direction)
+    { id: "s1", label: "up",    board: [[0,0,2,0],[0,0,2,0],[0,0,0,0],[0,0,0,0]], isCurrent: false, edgeColor: "#7209b7", edgeLabel: "up" },
+    // Successors (below current)
+    { id: "c1", label: "right", board: [[0,0,4,16],[0,0,0,32],[0,0,0,4],[0,0,0,2]], isCurrent: false, edgeColor: "#f72585", edgeLabel: "right" },
+    { id: "c2", label: "left",  board: [[2,4,8,16],[2,0,0,32],[4,0,0,4],[2,0,0,0]], isCurrent: false, edgeColor: "#f72585", edgeLabel: "left" },
+    { id: "c3", label: "up",    board: [[2,4,8,16],[0,0,0,32],[0,0,0,4],[0,0,2,2]], isCurrent: false, edgeColor: "#f72585", edgeLabel: "up" },
+    { id: "c4", label: "down",  board: [[0,0,0,0],[0,0,0,16],[2,4,8,32],[2,2,4,4]], isCurrent: false, edgeColor: "#f72585", edgeLabel: "down" },
   ];
 
-  const edges = [
-    [0, 1], [0, 2], [1, 3], [2, 4],
-  ];
+  const levelGap = 100;
+  const cx = w / 2;
+  const cy = h / 2 + 12;
 
-  ctx.strokeStyle = "rgba(255,255,255,0.25)";
-  ctx.lineWidth = 1.5;
-  for (const [a, b] of edges) {
+  const positions = new Map<string, { x: number; y: number }>();
+  positions.set("c0", { x: cx, y: cy });                  // current, center
+  positions.set("p0", { x: cx, y: cy - levelGap });      // predecessor, above
+  positions.set("s1", { x: cx + 120, y: cy - levelGap }); // sibling, offset above
+  positions.set("c1", { x: cx - 120, y: cy + levelGap }); // successors below
+  positions.set("c2", { x: cx - 40,  y: cy + levelGap + 30 });
+  positions.set("c3", { x: cx + 40,  y: cy + levelGap + 30 });
+  positions.set("c4", { x: cx + 120, y: cy + levelGap });
+
+  /* Draw edges */
+  const drawEdge = (from: string, to: string, label?: string, color = "rgba(255,255,255,0.25)") => {
+    const a = positions.get(from)!;
+    const b = positions.get(to)!;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(nodes[a].x, nodes[a].y);
-    ctx.lineTo(nodes[b].x, nodes[b].y);
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
     ctx.stroke();
-  }
+
+    if (label) {
+      const mx = (a.x + b.x) / 2;
+      const my = (a.y + b.y) / 2;
+      const pad = 2;
+      const tw = ctx.measureText(label).width + pad * 4;
+      ctx.fillStyle = "#1a1a2e";
+      ctx.fillRect(mx - tw / 2, my - 7, tw, 14);
+      ctx.fillStyle = color;
+      ctx.font = "10px monospace";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(label, mx, my);
+    }
+  };
+
+  // Predecessor -> current
+  drawEdge("p0", "c0", "spawn", nodes[0].edgeColor);
+  // Sibling branch (same predecessor)
+  drawEdge("p0", "s1", "up", nodes[2].edgeColor);
+  // Current -> successors
+  drawEdge("c0", "c1", "right", nodes[3].edgeColor);
+  drawEdge("c0", "c2", "left",  nodes[4].edgeColor);
+  drawEdge("c0", "c3", "up",    nodes[5].edgeColor);
+  drawEdge("c0", "c4", "down",  nodes[6].edgeColor);
+
+  /* Draw nodes as mini boards or circles */
+  const miniSize = 44;
+  const cellSize = (miniSize - 4) / 4;
 
   for (const n of nodes) {
+    const { x, y } = positions.get(n.id)!;
+    const isCur = n.isCurrent;
+
+    // Outer glow for current
+    if (isCur) {
+      ctx.save();
+      ctx.shadowColor = n.edgeColor;
+      ctx.shadowBlur = 18;
+      ctx.strokeStyle = n.edgeColor;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.roundRect(x - miniSize / 2, y - miniSize / 2, miniSize, miniSize, 4);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // Mini board background
+    ctx.fillStyle = isCur ? "#2a2a45" : "#1e1e30";
+    ctx.strokeStyle = isCur ? n.edgeColor : "rgba(255,255,255,0.15)";
+    ctx.lineWidth = isCur ? 2 : 1;
     ctx.beginPath();
-    ctx.arc(n.x, n.y, 24, 0, Math.PI * 2);
-    ctx.fillStyle = n.color + "33";
+    ctx.roundRect(x - miniSize / 2, y - miniSize / 2, miniSize, miniSize, 4);
     ctx.fill();
-    ctx.strokeStyle = n.color;
-    ctx.lineWidth = 2;
     ctx.stroke();
 
-    ctx.fillStyle = "#e0e0e0";
-    ctx.font = "11px monospace";
+    // Mini tiles
+    for (let r = 0; r < 4; r++) {
+      for (let c = 0; c < 4; c++) {
+        const val = n.board[r][c];
+        const colors = TILE_COLORS[val] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
+        const tx = x - miniSize / 2 + 2 + c * (cellSize + 1);
+        const ty = y - miniSize / 2 + 2 + r * (cellSize + 1);
+        ctx.fillStyle = colors.bg;
+        ctx.fillRect(tx, ty, cellSize, cellSize);
+        if (val > 0 && val >= 8) {
+          ctx.fillStyle = colors.fg;
+          ctx.font = `bold ${cellSize > 10 ? 7 : 6}px sans-serif`;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "middle";
+          ctx.fillText(String(val), tx + cellSize / 2, ty + cellSize / 2);
+        }
+      }
+    }
+
+    // Label below node
+    ctx.fillStyle = isCur ? n.edgeColor : "rgba(255,255,255,0.45)";
+    ctx.font = `10px monospace`;
     ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(n.label, n.x, n.y);
+    ctx.fillText(n.label, x, y + miniSize / 2 + 14);
   }
 
-  ctx.fillStyle = "rgba(255,255,255,0.4)";
-  ctx.font = "12px monospace";
-  ctx.textAlign = "center";
-  ctx.fillText("Graph visualization — Phase 10", w / 2, h - 20);
+  // Legend
+  ctx.fillStyle = "rgba(255,255,255,0.35)";
+  ctx.font = "11px monospace";
+  ctx.textAlign = "left";
+  ctx.fillText("Focused graph: current node + immediate neighborhood", 12, h - 12);
 }
 
+function sampleStart(): number[][] {
+  return [
+    [0,0,0,0],
+    [0,0,0,0],
+    [0,0,0,0],
+    [0,0,2,0],
+  ];
+}
+
+/* ── Main App ──────────────────────────────────────────────────── */
 export default function App() {
   const boardRef = useRef<HTMLCanvasElement>(null);
   const graphRef = useRef<HTMLCanvasElement>(null);
 
+  const board = [
+    [2, 4, 8, 16],
+    [0, 0, 2, 32],
+    [0, 0, 0, 4],
+    [0, 0, 0, 2],
+  ];
+
   useEffect(() => {
-    if (boardRef.current) drawPlaceholderBoard(boardRef.current);
-    if (graphRef.current) drawPlaceholderGraph(graphRef.current);
+    if (boardRef.current) drawBoard(boardRef.current, board);
+    if (graphRef.current) drawFocusedGraph(graphRef.current, board);
   }, []);
 
   return (
     <div style={{ minHeight: "100vh", background: "#faf8ef", display: "flex", flexDirection: "column", alignItems: "center", padding: "32px 16px", fontFamily: "'Clear Sans', Arial, sans-serif" }}>
       <h1 style={{ color: "#776e65", fontSize: 36, fontWeight: 800, margin: "0 0 4px" }}>2048</h1>
       <p style={{ color: "#9b8f82", fontSize: 14, margin: "0 0 24px" }}>
-        Rust/WASM · Phase 1 scaffold — placeholder canvas
+        Rust/WASM · Phase 1 scaffold — focused local graph
       </p>
 
       <div style={{ display: "flex", gap: 32, flexWrap: "wrap", justifyContent: "center" }}>
+        {/* Board Panel */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", width: 360, alignItems: "center" }}>
             <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>Board</span>
@@ -133,35 +239,23 @@ export default function App() {
               SCORE: 0
             </span>
           </div>
-          <canvas
-            ref={boardRef}
-            width={360}
-            height={360}
-            style={{ borderRadius: 8, display: "block" }}
-          />
+          <canvas ref={boardRef} width={360} height={360} style={{ borderRadius: 8, display: "block" }} />
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            {["↑", "↓", "←", "→"].map((dir) => (
-              <button
-                key={dir}
-                style={{ width: 44, height: 44, borderRadius: 6, border: "none", background: "#bbada0", color: "#f9f6f2", fontSize: 18, fontWeight: 700, cursor: "pointer" }}
-              >
+            {["↑","↓","←","→"].map((dir) => (
+              <button key={dir} style={{ width: 44, height: 44, borderRadius: 6, border: "none", background: "#bbada0", color: "#f9f6f2", fontSize: 18, fontWeight: 700, cursor: "pointer" }}>
                 {dir}
               </button>
             ))}
           </div>
         </div>
 
+        {/* Graph Panel */}
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", width: 440, alignItems: "center" }}>
-            <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>DAG — all games</span>
-            <span style={{ color: "#9b8f82", fontSize: 12 }}>0 nodes · 0 edges</span>
+            <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>Local Graph</span>
+            <span style={{ color: "#9b8f82", fontSize: 12 }}>current + neighborhood</span>
           </div>
-          <canvas
-            ref={graphRef}
-            width={440}
-            height={360}
-            style={{ borderRadius: 8, display: "block", border: "2px solid #cdc1b4" }}
-          />
+          <canvas ref={graphRef} width={440} height={360} style={{ borderRadius: 8, display: "block", border: "2px solid #cdc1b4" }} />
         </div>
       </div>
 
@@ -169,9 +263,9 @@ export default function App() {
         <h3 style={{ color: "#776e65", margin: "0 0 8px", fontSize: 14, fontWeight: 700 }}>Phase 1 Status</h3>
         <ul style={{ color: "#776e65", fontSize: 13, margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
           <li>Rust crate: <code>artifacts/game-2048/wasm-game/Cargo.toml</code></li>
-          <li>Build: <code>cd wasm-game && wasm-pack build --target web --out-dir ../public/wasm-pkg</code></li>
+          <li>Build: <code>pnpm --filter @workspace/game-2048 run build-wasm</code></li>
           <li>Frontend: Vite + React — canvas rendering ready</li>
-          <li>Graph canvas: placeholder DAG wireframe</li>
+          <li>Graph panel: <strong>focused local view</strong> (current node + immediate neighborhood)</li>
           <li>Phases 2–13: data model, move logic, WASM bridge, rendering</li>
         </ul>
       </div>
