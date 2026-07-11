@@ -25,7 +25,7 @@ A 2048 game where every board state across all game instances forms a global DAG
 
 - `artifacts/game-2048/` — Vite + React frontend (canvas rendering)
 - `artifacts/game-2048/wasm-game/` — Rust crate (game logic, compiled to WASM)
-- `artifacts/game-2048/public/wasm-pkg/` — wasm-pack output (gitignore candidate)
+- `artifacts/game-2048/public/wasm-pkg/` — wasm-pack output (gitignored)
 - `artifacts/game-2048/src/App.tsx` — main canvas rendering entry point
 - `artifacts/api-server/src/` — Express API server (health + future endpoints)
 - `lib/api-spec/openapi.yaml` — OpenAPI spec source of truth
@@ -64,8 +64,7 @@ Phases: 1 ✅ Setup | 2 Data model | 3 Move logic | 4 Spawning | 5 Graph updates
 
 ## Gotchas
 
-- **NixOS wasm32 target**: The Nix-installed rustc (1.88.0) doesn't include the wasm32 target in its sysroot. Fix: run `rustup toolchain install 1.88.0 --target wasm32-unknown-unknown` once, then the `build-wasm` script uses `~/bin-wasm/rustc` (a wrapper that passes `--sysroot ~/.wasm-sysroot` with the correct wasm32 libs). Run `pnpm --filter @workspace/game-2048 run build-wasm` to rebuild after Rust changes.
-- **rustup TLS issue**: The rustup-installed rustc binaries fail with `cannot allocate memory in static TLS block` in this Nix environment — use the wrapper approach above instead.
+- **WASM build**: The Nix environment provides `rustup` and `wasm-pack`. Run `rustup toolchain install 1.88.0 --target wasm32-unknown-unknown` once, then `pnpm --filter @workspace/game-2048 run build-wasm` rebuilds cleanly via `rustup run 1.88.0 wasm-pack build`. No compiler wrappers or sysroots are committed.
 - **Required env**: `DATABASE_URL` — Postgres connection string (for API server)
 - **Run `pnpm --filter @workspace/api-spec run codegen`** after any OpenAPI spec change
 

@@ -1,0 +1,4 @@
+# Rust/WASM build artifacts (never commit)
+wasm-game/target/
+.wasm-sysroot/
+wasm-game/public/wasm-pkg/
