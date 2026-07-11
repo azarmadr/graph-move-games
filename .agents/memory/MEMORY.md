@@ -1,0 +1,2 @@
+- [wasm-pack out-dir quirk](wasm-pack-out-dir.md) — `wasm-pack build <crate> --out-dir X` resolves X relative to the crate dir, not the cwd.
+- [Registering pre-existing artifacts on import](artifact-toml-reimport.md) — GitHub-imported repos with artifact.toml files but no workflows: any createArtifact call auto-registers other unregistered on-disk artifacts too.
