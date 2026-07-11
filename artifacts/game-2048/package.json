@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite --config vite.config.ts --host 0.0.0.0",
     "build": "vite build --config vite.config.ts",
-    "build-wasm": "PATH=$HOME/bin-wasm:$PATH wasm-pack build wasm-game --target web --out-dir public/wasm-pkg",
+    "build-wasm": "RUSTC=/home/runner/workspace/artifacts/game-2048/.wasm-sysroot/bin/rustc cargo build --manifest-path wasm-game/Cargo.toml --target wasm32-unknown-unknown --release && /home/runner/workspace/.cache/.wasm-pack/wasm-bindgen-e027939f93310aaa/wasm-bindgen wasm-game/target/wasm32-unknown-unknown/release/game_2048_wasm.wasm --target web --out-dir public/wasm-pkg",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

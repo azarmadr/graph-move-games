@@ -1,4 +1,5 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { loadWasm, createGame, makeMove, type GameState, type Direction, type Node, type Edge, type EdgeType } from "./wasmBridge";
 
 const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
   0:    { bg: "#cdc1b4", fg: "#cdc1b4" },
@@ -15,8 +16,7 @@ const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
   2048: { bg: "#edc22e", fg: "#f9f6f2" },
 };
 
-/* ── Board renderer ────────────────────────────────────────────── */
-function drawBoard(canvas: HTMLCanvasElement, board: number[][]) {
+function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
   const ctx = canvas.getContext("2d")!;
   const size = canvas.width;
   const padding = 12;
@@ -28,9 +28,15 @@ function drawBoard(canvas: HTMLCanvasElement, board: number[][]) {
   ctx.roundRect(0, 0, size, size, 8);
   ctx.fill();
 
+  // Build 4x4 grid from sparse board
+  const grid: number[][] = Array.from({ length: 4 }, () => Array(4).fill(0));
+  for (const cell of state.active_board.tiles) {
+    grid[cell.pos.r][cell.pos.c] = cell.tile;
+  }
+
   for (let r = 0; r < 4; r++) {
     for (let c = 0; c < 4; c++) {
-      const val = board[r][c];
+      const val = grid[r][c];
       const x = padding + c * (cellSize + gap);
       const y = padding + r * (cellSize + gap);
       const colors = TILE_COLORS[val] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
@@ -52,17 +58,8 @@ function drawBoard(canvas: HTMLCanvasElement, board: number[][]) {
   }
 }
 
-/* ── Focused graph renderer (local neighborhood) ───────────────── */
-interface NodeData {
-  id: string;
-  label: string;
-  board: number[][];
-  isCurrent: boolean;
-  edgeColor: string;
-  edgeLabel?: string;
-}
-
-function drawFocusedGraph(canvas: HTMLCanvasElement, currentBoard: number[][]) {
+/* ── Focused graph renderer (real data from WASM) ──────────────────────── */
+function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
   const ctx = canvas.getContext("2d")!;
   const w = canvas.width;
   const h = canvas.height;
@@ -70,38 +67,86 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, currentBoard: number[][]) {
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, w, h);
 
-  /* Build a plausible 2-deep neighborhood around the current board */
-  const nodes: NodeData[] = [
-    // Predecessors (above current)
-    { id: "p0", label: "start", board: sampleStart(), isCurrent: false, edgeColor: "#4cc9f0", edgeLabel: "spawn" },
-    // Current node (center)
-    { id: "c0", label: "current", board: currentBoard, isCurrent: true, edgeColor: "#4cc9f0" },
-    // Siblings (same predecessor, different direction)
-    { id: "s1", label: "up",    board: [[0,0,2,0],[0,0,2,0],[0,0,0,0],[0,0,0,0]], isCurrent: false, edgeColor: "#7209b7", edgeLabel: "up" },
-    // Successors (below current)
-    { id: "c1", label: "right", board: [[0,0,4,16],[0,0,0,32],[0,0,0,4],[0,0,0,2]], isCurrent: false, edgeColor: "#f72585", edgeLabel: "right" },
-    { id: "c2", label: "left",  board: [[2,4,8,16],[2,0,0,32],[4,0,0,4],[2,0,0,0]], isCurrent: false, edgeColor: "#f72585", edgeLabel: "left" },
-    { id: "c3", label: "up",    board: [[2,4,8,16],[0,0,0,32],[0,0,0,4],[0,0,2,2]], isCurrent: false, edgeColor: "#f72585", edgeLabel: "up" },
-    { id: "c4", label: "down",  board: [[0,0,0,0],[0,0,0,16],[2,4,8,32],[2,2,4,4]], isCurrent: false, edgeColor: "#f72585", edgeLabel: "down" },
-  ];
+  const { nodes, edges } = state.graph;
+  const cursorSink = state.cursor.sink_id;
 
-  const levelGap = 100;
+  // Gather neighborhood: predecessors (edges -> cursorSink) and successors (cursorSink -> edges)
+  const predIds = new Set<number>();
+  const succIds = new Set<number>();
+  for (const e of edges) {
+    if (e.to === cursorSink) predIds.add(e.from);
+    if (e.from === cursorSink) succIds.add(e.to);
+  }
+
+  // Build display nodes: predecessor(s), current, successor(s)
+  const displayNodes: Array<{
+    node: Node;
+    isCurrent: boolean;
+    edgeColor: string;
+    edgeLabel?: string;
+  }> = [];
+
+  const findNode = (id: number) => nodes.find((n) => n.node_id === id);
+
+  // Predecessors
+  for (const pid of predIds) {
+    const n = findNode(pid);
+    if (n) displayNodes.push({ node: n, isCurrent: false, edgeColor: "#4cc9f0" });
+  }
+
+  // Current
+  const cur = findNode(cursorSink);
+  if (cur) displayNodes.push({ node: cur, isCurrent: true, edgeColor: "#4cc9f0" });
+
+  // Successors — deduplicate by node_id, label by first move edge direction
+  for (const sid of succIds) {
+    const n = findNode(sid);
+    if (!n) continue;
+    // Find the Move edge label
+    const moveEdge = edges.find((e) => e.from === cursorSink && e.to === sid && "Move" in (e.edge_type as any));
+    const label = moveEdge
+      ? (moveEdge.edge_type as { Move: { direction: string } }).Move.direction.toLowerCase()
+      : "spawn";
+    displayNodes.push({ node: n, isCurrent: false, edgeColor: "#f72585", edgeLabel: label });
+  }
+
+  if (displayNodes.length === 0) {
+    ctx.fillStyle = "rgba(255,255,255,0.4)";
+    ctx.font = "12px monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("No graph data yet", w / 2, h / 2);
+    return;
+  }
+
+  // Assign positions: current center, preds above, succs below
+  const positions = new Map<number, { x: number; y: number }>();
   const cx = w / 2;
   const cy = h / 2 + 12;
+  const levelGap = 100;
 
-  const positions = new Map<string, { x: number; y: number }>();
-  positions.set("c0", { x: cx, y: cy });                  // current, center
-  positions.set("p0", { x: cx, y: cy - levelGap });      // predecessor, above
-  positions.set("s1", { x: cx + 120, y: cy - levelGap }); // sibling, offset above
-  positions.set("c1", { x: cx - 120, y: cy + levelGap }); // successors below
-  positions.set("c2", { x: cx - 40,  y: cy + levelGap + 30 });
-  positions.set("c3", { x: cx + 40,  y: cy + levelGap + 30 });
-  positions.set("c4", { x: cx + 120, y: cy + levelGap });
+  // Count predecessors and successors for horizontal spacing
+  const preds = displayNodes.filter((d) => !d.isCurrent && predIds.has(d.node.node_id));
+  const succs = displayNodes.filter((d) => !d.isCurrent && succIds.has(d.node.node_id));
 
-  /* Draw edges */
-  const drawEdge = (from: string, to: string, label?: string, color = "rgba(255,255,255,0.25)") => {
-    const a = positions.get(from)!;
-    const b = positions.get(to)!;
+  if (preds.length > 0) {
+    const startX = cx - (preds.length - 1) * 60;
+    preds.forEach((d, i) => {
+      positions.set(d.node.node_id, { x: startX + i * 120, y: cy - levelGap });
+    });
+  }
+  positions.set(cursorSink, { x: cx, y: cy });
+  if (succs.length > 0) {
+    const startX = cx - (succs.length - 1) * 50;
+    succs.forEach((d, i) => {
+      positions.set(d.node.node_id, { x: startX + i * 100, y: cy + levelGap + 20 });
+    });
+  }
+
+  // Draw edges
+  const drawEdge = (fromId: number, toId: number, label?: string, color = "rgba(255,255,255,0.25)") => {
+    const a = positions.get(fromId);
+    const b = positions.get(toId);
+    if (!a || !b) return;
     ctx.strokeStyle = color;
     ctx.lineWidth = 1.5;
     ctx.beginPath();
@@ -112,8 +157,7 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, currentBoard: number[][]) {
     if (label) {
       const mx = (a.x + b.x) / 2;
       const my = (a.y + b.y) / 2;
-      const pad = 2;
-      const tw = ctx.measureText(label).width + pad * 4;
+      const tw = ctx.measureText(label).width + 8;
       ctx.fillStyle = "#1a1a2e";
       ctx.fillRect(mx - tw / 2, my - 7, tw, 14);
       ctx.fillStyle = color;
@@ -124,30 +168,35 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, currentBoard: number[][]) {
     }
   };
 
-  // Predecessor -> current
-  drawEdge("p0", "c0", "spawn", nodes[0].edgeColor);
-  // Sibling branch (same predecessor)
-  drawEdge("p0", "s1", "up", nodes[2].edgeColor);
-  // Current -> successors
-  drawEdge("c0", "c1", "right", nodes[3].edgeColor);
-  drawEdge("c0", "c2", "left",  nodes[4].edgeColor);
-  drawEdge("c0", "c3", "up",    nodes[5].edgeColor);
-  drawEdge("c0", "c4", "down",  nodes[6].edgeColor);
+  // Pred edges
+  for (const pid of predIds) drawEdge(pid, cursorSink, "spawn", "#4cc9f0");
+  // Succ edges
+  for (const d of succs) {
+    const label = d.edgeLabel;
+    drawEdge(cursorSink, d.node.node_id, label, d.edgeColor);
+  }
 
-  /* Draw nodes as mini boards or circles */
+  // Draw nodes
   const miniSize = 44;
   const cellSize = (miniSize - 4) / 4;
 
-  for (const n of nodes) {
-    const { x, y } = positions.get(n.id)!;
-    const isCur = n.isCurrent;
+  for (const d of displayNodes) {
+    const pos = positions.get(d.node.node_id)!;
+    const { x, y } = pos;
+    const isCur = d.isCurrent;
 
-    // Outer glow for current
+    // Grid for mini board
+    const grid: number[][] = Array.from({ length: 4 }, () => Array(4).fill(0));
+    for (const cell of d.node.board.tiles) {
+      grid[cell.pos.r][cell.pos.c] = cell.tile;
+    }
+
+    // Glow for current
     if (isCur) {
       ctx.save();
-      ctx.shadowColor = n.edgeColor;
+      ctx.shadowColor = d.edgeColor;
       ctx.shadowBlur = 18;
-      ctx.strokeStyle = n.edgeColor;
+      ctx.strokeStyle = d.edgeColor;
       ctx.lineWidth = 2;
       ctx.beginPath();
       ctx.roundRect(x - miniSize / 2, y - miniSize / 2, miniSize, miniSize, 4);
@@ -155,9 +204,9 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, currentBoard: number[][]) {
       ctx.restore();
     }
 
-    // Mini board background
+    // Mini board bg
     ctx.fillStyle = isCur ? "#2a2a45" : "#1e1e30";
-    ctx.strokeStyle = isCur ? n.edgeColor : "rgba(255,255,255,0.15)";
+    ctx.strokeStyle = isCur ? d.edgeColor : "rgba(255,255,255,0.15)";
     ctx.lineWidth = isCur ? 2 : 1;
     ctx.beginPath();
     ctx.roundRect(x - miniSize / 2, y - miniSize / 2, miniSize, miniSize, 4);
@@ -167,7 +216,7 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, currentBoard: number[][]) {
     // Mini tiles
     for (let r = 0; r < 4; r++) {
       for (let c = 0; c < 4; c++) {
-        const val = n.board[r][c];
+        const val = grid[r][c];
         const colors = TILE_COLORS[val] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
         const tx = x - miniSize / 2 + 2 + c * (cellSize + 1);
         const ty = y - miniSize / 2 + 2 + r * (cellSize + 1);
@@ -183,51 +232,69 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, currentBoard: number[][]) {
       }
     }
 
-    // Label below node
-    ctx.fillStyle = isCur ? n.edgeColor : "rgba(255,255,255,0.45)";
-    ctx.font = `10px monospace`;
+    // Label
+    ctx.fillStyle = isCur ? d.edgeColor : "rgba(255,255,255,0.45)";
+    ctx.font = "10px monospace";
     ctx.textAlign = "center";
-    ctx.fillText(n.label, x, y + miniSize / 2 + 14);
+    const labelText = isCur ? "current" : (d.edgeLabel ?? "node");
+    ctx.fillText(labelText, x, y + miniSize / 2 + 14);
   }
 
   // Legend
   ctx.fillStyle = "rgba(255,255,255,0.35)";
   ctx.font = "11px monospace";
   ctx.textAlign = "left";
-  ctx.fillText("Focused graph: current node + immediate neighborhood", 12, h - 12);
-}
-
-function sampleStart(): number[][] {
-  return [
-    [0,0,0,0],
-    [0,0,0,0],
-    [0,0,0,0],
-    [0,0,2,0],
-  ];
+  ctx.fillText(`Game ${state.active_game_id} · Node ${cursorSink} · Score ${state.cursor.score} · ${state.cursor.status}`, 12, h - 12);
 }
 
 /* ── Main App ──────────────────────────────────────────────────── */
 export default function App() {
   const boardRef = useRef<HTMLCanvasElement>(null);
   const graphRef = useRef<HTMLCanvasElement>(null);
-
-  const board = [
-    [2, 4, 8, 16],
-    [0, 0, 2, 32],
-    [0, 0, 0, 4],
-    [0, 0, 0, 2],
-  ];
+  const [state, setState] = useState<GameState | null>(null);
 
   useEffect(() => {
-    if (boardRef.current) drawBoard(boardRef.current, board);
-    if (graphRef.current) drawFocusedGraph(graphRef.current, board);
+    loadWasm().then(() => createGame()).then((s) => setState(s));
   }, []);
+
+  useEffect(() => {
+    if (!state) return;
+    if (boardRef.current) drawBoard(boardRef.current, state);
+    if (graphRef.current) drawFocusedGraph(graphRef.current, state);
+  }, [state]);
+
+  const handleMove = async (dir: Direction) => {
+    if (!state || state.cursor.status === "Terminated") return;
+    try {
+      const resp = await makeMove(state.active_game_id, dir);
+      setState(resp.game_state);
+    } catch (e) {
+      console.error("move failed:", e);
+    }
+  };
+
+  // Keyboard handler
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const map: Record<string, Direction> = {
+        ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
+        w: "Up", s: "Down", a: "Left", d: "Right",
+        W: "Up", S: "Down", A: "Left", D: "Right",
+      };
+      if (map[e.key]) {
+        e.preventDefault();
+        handleMove(map[e.key]);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [state]);
 
   return (
     <div style={{ minHeight: "100vh", background: "#faf8ef", display: "flex", flexDirection: "column", alignItems: "center", padding: "32px 16px", fontFamily: "'Clear Sans', Arial, sans-serif" }}>
       <h1 style={{ color: "#776e65", fontSize: 36, fontWeight: 800, margin: "0 0 4px" }}>2048</h1>
       <p style={{ color: "#9b8f82", fontSize: 14, margin: "0 0 24px" }}>
-        Rust/WASM · Phase 1 scaffold — focused local graph
+        Rust/WASM · Phase 2 — real data model + WASM bridge
       </p>
 
       <div style={{ display: "flex", gap: 32, flexWrap: "wrap", justifyContent: "center" }}>
@@ -236,13 +303,21 @@ export default function App() {
           <div style={{ display: "flex", justifyContent: "space-between", width: 360, alignItems: "center" }}>
             <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>Board</span>
             <span style={{ background: "#bbada0", color: "#f9f6f2", fontWeight: 700, padding: "4px 14px", borderRadius: 4, fontSize: 14 }}>
-              SCORE: 0
+              SCORE: {state?.cursor.score ?? 0}
             </span>
           </div>
           <canvas ref={boardRef} width={360} height={360} style={{ borderRadius: 8, display: "block" }} />
           <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
             {["↑","↓","←","→"].map((dir) => (
-              <button key={dir} style={{ width: 44, height: 44, borderRadius: 6, border: "none", background: "#bbada0", color: "#f9f6f2", fontSize: 18, fontWeight: 700, cursor: "pointer" }}>
+              <button
+                key={dir}
+                disabled={state?.cursor.status === "Terminated"}
+                onClick={() => {
+                  const dmap: Record<string, Direction> = { "↑": "Up", "↓": "Down", "←": "Left", "→": "Right" };
+                  handleMove(dmap[dir]);
+                }}
+                style={{ width: 44, height: 44, borderRadius: 6, border: "none", background: "#bbada0", color: "#f9f6f2", fontSize: 18, fontWeight: 700, cursor: state?.cursor.status === "Terminated" ? "not-allowed" : "pointer", opacity: state?.cursor.status === "Terminated" ? 0.5 : 1 }}
+              >
                 {dir}
               </button>
             ))}
@@ -253,20 +328,21 @@ export default function App() {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", width: 440, alignItems: "center" }}>
             <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>Local Graph</span>
-            <span style={{ color: "#9b8f82", fontSize: 12 }}>current + neighborhood</span>
+            <span style={{ color: "#9b8f82", fontSize: 12 }}>
+              {state ? `${state.graph.nodes.length} nodes · ${state.graph.edges.length} edges` : "loading…"}
+            </span>
           </div>
           <canvas ref={graphRef} width={440} height={360} style={{ borderRadius: 8, display: "block", border: "2px solid #cdc1b4" }} />
         </div>
       </div>
 
       <div style={{ marginTop: 32, padding: "16px 24px", background: "#ede0c8", borderRadius: 8, maxWidth: 600, width: "100%" }}>
-        <h3 style={{ color: "#776e65", margin: "0 0 8px", fontSize: 14, fontWeight: 700 }}>Phase 1 Status</h3>
+        <h3 style={{ color: "#776e65", margin: "0 0 8px", fontSize: 14, fontWeight: 700 }}>Phase 2 Status</h3>
         <ul style={{ color: "#776e65", fontSize: 13, margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
-          <li>Rust crate: <code>artifacts/game-2048/wasm-game/Cargo.toml</code></li>
-          <li>Build: <code>pnpm --filter @workspace/game-2048 run build-wasm</code></li>
-          <li>Frontend: Vite + React — canvas rendering ready</li>
-          <li>Graph panel: <strong>focused local view</strong> (current node + immediate neighborhood)</li>
-          <li>Phases 2–13: data model, move logic, WASM bridge, rendering</li>
+          <li>Rust types: Board, Cell, Node, Edge, GameCursor, GraphSnapshot</li>
+          <li>WASM exports: <code>create_game()</code>, <code>make_move(req)</code>, <code>get_state(id)</code></li>
+          <li>JS bridge: <code>wasmBridge.ts</code> — typed JSON contract matching Rust structs</li>
+          <li>Graph panel: renders real neighborhood from WASM graph snapshot</li>
         </ul>
       </div>
     </div>
