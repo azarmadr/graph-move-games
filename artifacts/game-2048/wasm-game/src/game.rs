@@ -13,7 +13,7 @@ struct GameInstance {
 pub struct Engine {
     graph: GraphStore,
     games: HashMap<GameId, GameInstance>,
-    next_game_id: GameId,
+    next_game_nonce: u64,
     spawn_config: SpawnConfig,
 }
 
@@ -22,7 +22,7 @@ impl Engine {
         Self {
             graph: GraphStore::new(),
             games: HashMap::new(),
-            next_game_id: 1,
+            next_game_nonce: 1,
             spawn_config: SpawnConfig::default(),
         }
     }
@@ -30,8 +30,8 @@ impl Engine {
     /// Create a new game instance starting with a single tile.
     /// Returns the new game_id and the initial full state.
     pub fn create_game(&mut self, config: &GameConfig) -> GameState {
-        let game_id = self.next_game_id;
-        self.next_game_id += 1;
+        let game_id = GameId::from_nonce(self.next_game_nonce);
+        self.next_game_nonce += 1;
 
         let rows = config.rows;
         let cols = config.cols;
@@ -39,36 +39,27 @@ impl Engine {
         // Board: single tile at (0,0) with value 2
         let start_board = Board::with_tiles(rows, cols, vec![Cell::new(0, 0, 2)]);
 
-        let source_id = self.graph.alloc_node_id();
-        let source = Node {
-            node_id: source_id,
-            board: start_board.clone(),
-            kind: NodeKind::Source,
-        };
-        self.graph.insert_node(source);
+        let source_id = self.graph.insert_node(start_board.clone(), NodeKind::Source).node_id;
 
-        let sink_id = self.graph.alloc_node_id();
-        let sink = Node {
-            node_id: sink_id,
-            board: start_board.clone(),
-            kind: NodeKind::Sink {
-                game_id,
-                status: GameStatus::Active,
-            },
-        };
-        self.graph.insert_node(sink);
+        let sink_id = self.graph
+            .insert_node(
+                start_board.clone(),
+                NodeKind::Sink {
+                    game_id,
+                    status: GameStatus::Active,
+                },
+            )
+            .node_id;
 
-        let edge_id = self.graph.alloc_edge_id();
-        self.graph.insert_edge(Edge {
-            edge_id,
-            from: source_id,
-            to: sink_id,
-            edge_type: EdgeType::Spawn {
+        self.graph.insert_edge(
+            source_id,
+            sink_id,
+            EdgeType::Spawn {
                 spawn: SpawnPayload {
                     cells: vec![Cell::new(0, 0, 2)],
                 },
             },
-        });
+        );
 
         let cursor = GameCursor {
             game_id,
@@ -154,12 +145,11 @@ impl Engine {
             };
         }
 
-        // 2. Convert old sink to Regular
-        self.graph.insert_node(Node {
-            node_id: old_sink_id,
-            board: old_sink.board.clone(),
-            kind: NodeKind::Regular,
-        });
+        // 2. Convert old sink to a shared Regular node. With content-addressed IDs
+        // the Regular node may already exist from another game; overwriting it
+        // with the same content is harmless. The old Sink node remains in the
+        // graph with its game-specific ID so existing edges remain valid.
+        self.graph.insert_node(old_sink.board.clone(), NodeKind::Regular);
 
         // 3. Enumerate spawn outcomes
         let outcomes = enumerate_spawn_outcomes(&merged_board, &self.spawn_config);
@@ -171,16 +161,11 @@ impl Engine {
         let mut chosen_sink_id = old_sink_id; // fallback (should not happen)
 
         for (idx, outcome) in outcomes.iter().enumerate() {
-            let new_board = merged_board.clone();
-            // Apply spawn cells to board
-            let mut board = new_board;
+            let mut board = merged_board.clone();
             for cell in &outcome.cells {
                 board = board.set(cell.pos.r, cell.pos.c, cell.tile);
             }
 
-            let new_sink_id = self.graph.alloc_node_id();
-
-            // Check if any valid moves remain from this board
             let has_moves = has_any_valid_move(&board);
             let status = if has_moves {
                 GameStatus::Active
@@ -188,46 +173,38 @@ impl Engine {
                 GameStatus::Terminated
             };
 
-            let sink = Node {
-                node_id: new_sink_id,
-                board: board.clone(),
-                kind: NodeKind::Sink {
+            let new_sink = self.graph.insert_node(
+                board.clone(),
+                NodeKind::Sink {
                     game_id: req.game_id,
                     status,
                 },
-            };
-            self.graph.insert_node(sink.clone());
-            new_nodes.push(sink);
+            );
+            new_nodes.push(new_sink.clone());
 
             // Move edge (old_sink -> new_sink)
-            let move_edge_id = self.graph.alloc_edge_id();
-            let move_edge = Edge {
-                edge_id: move_edge_id,
-                from: old_sink_id,
-                to: new_sink_id,
-                edge_type: EdgeType::Move {
+            let move_edge = self.graph.insert_edge(
+                old_sink_id,
+                new_sink.node_id,
+                EdgeType::Move {
                     direction: req.direction,
                 },
-            };
-            self.graph.insert_edge(move_edge.clone());
+            );
             new_edges.push(move_edge);
 
             // Spawn edge (old_sink -> new_sink)
-            let spawn_edge_id = self.graph.alloc_edge_id();
-            let spawn_edge = Edge {
-                edge_id: spawn_edge_id,
-                from: old_sink_id,
-                to: new_sink_id,
-                edge_type: EdgeType::Spawn {
+            let spawn_edge = self.graph.insert_edge(
+                old_sink_id,
+                new_sink.node_id,
+                EdgeType::Spawn {
                     spawn: outcome.clone(),
                 },
-            };
-            self.graph.insert_edge(spawn_edge.clone());
+            );
             new_edges.push(spawn_edge);
 
             if idx == 0 {
                 // Deterministic branch choice: first outcome by stable ordering
-                chosen_sink_id = new_sink_id;
+                chosen_sink_id = new_sink.node_id;
             }
         }
 
@@ -264,7 +241,7 @@ impl Engine {
                 active_board,
                 graph: self.graph.snapshot(),
             },
-            delta: GraphDelta {
+                delta: GraphDelta {
                 nodes_added: new_nodes,
                 edges_added: new_edges,
                 is_terminated,
@@ -291,12 +268,43 @@ impl Engine {
         }
     }
 
+    pub fn all_game_states(&self) -> Vec<GameState> {
+        self.games.keys().map(|&id| self.get_state(id)).collect()
+    }
+
+    pub fn export(&self) -> ExportData {
+        ExportData {
+            version: 1,
+            graph: self.graph.snapshot(),
+            games: self.games.values().map(|g| g.cursor.clone()).collect(),
+            next_game_nonce: self.next_game_nonce,
+        }
+    }
+
+    pub fn import(&mut self, data: ExportData) -> ImportResult {
+        self.graph.load_snapshot(data.graph);
+        self.games.clear();
+        for cursor in data.games {
+            self.games.insert(
+                cursor.game_id,
+                GameInstance {
+                    cursor: cursor.clone(),
+                },
+            );
+        }
+        self.next_game_nonce = data.next_game_nonce;
+        ImportResult {
+            success: true,
+            games: self.all_game_states(),
+        }
+    }
+
     fn empty_state(&self, game_id: GameId) -> GameState {
         GameState {
             active_game_id: game_id,
             cursor: GameCursor {
                 game_id,
-                sink_id: 0,
+                sink_id: NodeId::zero(),
                 status: GameStatus::Terminated,
                 score: 0,
             },

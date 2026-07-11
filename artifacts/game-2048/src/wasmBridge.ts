@@ -80,6 +80,18 @@ export interface GameConfig {
   cols: number;
 }
 
+export interface ExportData {
+  version: number;
+  graph: GraphSnapshot;
+  games: GameCursor[];
+  next_game_nonce: number;
+}
+
+export interface ImportResult {
+  success: boolean;
+  games: GameState[];
+}
+
 /* ── WASM module loader ────────────────────────────────────────────── */
 
 let wasmModule: any = null;
@@ -115,4 +127,16 @@ export async function getState(gameId: number): Promise<GameState> {
   const m = await loadWasm();
   const json = m.get_state(String(gameId));
   return JSON.parse(json) as GameState;
+}
+
+export async function exportGraph(): Promise<ExportData> {
+  const m = await loadWasm();
+  const json = m.export_graph();
+  return JSON.parse(json) as ExportData;
+}
+
+export async function importGraph(jsonText: string): Promise<ImportResult> {
+  const m = await loadWasm();
+  const json = m.import_graph(jsonText);
+  return JSON.parse(json) as ImportResult;
 }

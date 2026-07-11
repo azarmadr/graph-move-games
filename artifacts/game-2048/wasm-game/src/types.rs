@@ -1,5 +1,7 @@
 use serde::{Deserialize, Serialize};
 
+use crate::hash::Fnv1a;
+
 /* ── Positions and cells ───────────────────────────────────────── */
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Pos {
@@ -98,13 +100,106 @@ impl Board {
             tiles,
         }
     }
+
+    /// Hashable canonical representation used for content-addressed IDs.
+    fn hash_content(&self, hasher: &mut Fnv1a) {
+        hasher.write_u8(self.dim.0);
+        hasher.write_u8(self.dim.1);
+        for cell in &self.tiles {
+            hasher.write_u8(cell.pos.r);
+            hasher.write_u8(cell.pos.c);
+            hasher.write_u32(cell.tile);
+        }
+    }
 }
 
-/* ── Node IDs and kinds ────────────────────────────────────────── */
-pub type NodeId = u64;
-pub type EdgeId = u64;
-pub type GameId = u64;
+/* ── Strongly typed IDs ──────────────────────────────────────────── */
+macro_rules! strong_id {
+    ($name:ident) => {
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        pub struct $name(pub u64);
 
+        impl $name {
+            #[allow(dead_code)]
+            pub const fn zero() -> Self {
+                Self(0)
+            }
+        }
+
+        impl std::fmt::Display for $name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    };
+}
+
+strong_id!(NodeId);
+strong_id!(EdgeId);
+strong_id!(GameId);
+
+impl NodeId {
+    /// Content-addressed ID: hash of the board + node kind.
+    ///
+    /// Source/Regular nodes for the same board share the same ID across games,
+    /// while Sink nodes are game-specific (and include their status).
+    pub fn from_content(board: &Board, kind: &NodeKind) -> Self {
+        let mut h = Fnv1a::new();
+        board.hash_content(&mut h);
+        match kind {
+            NodeKind::Source => { h.write_u8(0); }
+            NodeKind::Regular => { h.write_u8(1); }
+            NodeKind::Sink { game_id, status } => {
+                h.write_u8(2);
+                h.write_u64(game_id.0);
+                h.write_u8(match status {
+                    GameStatus::Active => 0,
+                    GameStatus::Terminated => 1,
+                });
+            }
+        }
+        Self(h.finish())
+    }
+}
+
+impl EdgeId {
+    /// Content-addressed ID: hash of (from, to, edge_type).
+    pub fn from_content(from: NodeId, to: NodeId, edge_type: &EdgeType) -> Self {
+        let mut h = Fnv1a::new();
+        h.write_u64(from.0);
+        h.write_u64(to.0);
+        match edge_type {
+            EdgeType::Move { direction } => {
+                h.write_u8(0);
+                h.write_u8(match direction {
+                    Direction::Up => 0,
+                    Direction::Down => 1,
+                    Direction::Left => 2,
+                    Direction::Right => 3,
+                });
+            }
+            EdgeType::Spawn { spawn } => {
+                h.write_u8(1);
+                for cell in &spawn.cells {
+                    h.write_u8(cell.pos.r);
+                    h.write_u8(cell.pos.c);
+                    h.write_u32(cell.tile);
+                }
+            }
+        }
+        Self(h.finish())
+    }
+}
+
+impl GameId {
+    /// Deterministic hash of a creation nonce. Exported alongside the games so
+    /// new games after import never collide with imported ones.
+    pub fn from_nonce(nonce: u64) -> Self {
+        Self(crate::hash::hash_u64(nonce))
+    }
+}
+
+/* ── Node kinds and nodes ────────────────────────────────────────── */
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum GameStatus {
     Active,
@@ -219,4 +314,19 @@ impl Default for GameConfig {
     fn default() -> Self {
         Self { rows: 4, cols: 4 }
     }
+}
+
+/* ── Export / Import format ───────────────────────────────────────── */
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExportData {
+    pub version: u32,
+    pub graph: GraphSnapshot,
+    pub games: Vec<GameCursor>,
+    pub next_game_nonce: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ImportResult {
+    pub success: bool,
+    pub games: Vec<GameState>,
 }

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { loadWasm, createGame, createGameWithConfig, makeMove, type GameState, type Direction, type Node, type Edge, type EdgeType, type GameConfig } from "./wasmBridge";
+import { loadWasm, createGame, createGameWithConfig, makeMove, exportGraph, importGraph, type GameState, type Direction, type Node, type Edge, type EdgeType, type GameConfig } from "./wasmBridge";
 
 const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
   0:    { bg: "#cdc1b4", fg: "#cdc1b4" },
@@ -330,6 +330,32 @@ export default function App() {
     setState(s);
   };
 
+  const handleExport = async () => {
+    try {
+      const data = await exportGraph();
+      const json = JSON.stringify(data, null, 2);
+      await navigator.clipboard.writeText(json);
+      alert("Graph exported to clipboard!");
+    } catch (e) {
+      console.error("export failed:", e);
+      alert("Export failed — see console.");
+    }
+  };
+
+  const handleImport = async () => {
+    try {
+      const text = await navigator.clipboard.readText();
+      const result = await importGraph(text);
+      if (result.success && result.games.length > 0) {
+        setState(result.games[0]);
+      }
+      alert(`Imported ${result.games.length} game(s).`);
+    } catch (e) {
+      console.error("import failed:", e);
+      alert("Import failed — see console.");
+    }
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "#faf8ef", display: "flex", flexDirection: "column", alignItems: "center", padding: "32px 16px", fontFamily: "'Clear Sans', Arial, sans-serif" }}>
       <h1 style={{ color: "#776e65", fontSize: 36, fontWeight: 800, margin: "0 0 4px" }}>2048</h1>
@@ -399,9 +425,13 @@ export default function App() {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", width: 440, alignItems: "center" }}>
             <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>Local Graph</span>
-            <span style={{ color: "#9b8f82", fontSize: 12 }}>
-              {state ? `${state.graph.nodes.length} nodes · ${state.graph.edges.length} edges` : "loading…"}
-            </span>
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <span style={{ color: "#9b8f82", fontSize: 12 }}>
+                {state ? `${state.graph.nodes.length} nodes · ${state.graph.edges.length} edges` : "loading…"}
+              </span>
+              <button onClick={handleExport} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "#8f7a66", color: "#f9f6f2", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Export</button>
+              <button onClick={handleImport} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "#8f7a66", color: "#f9f6f2", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Import</button>
+            </div>
           </div>
           <canvas ref={graphRef} width={440} height={360} style={{ borderRadius: 8, display: "block", border: "2px solid #cdc1b4" }} />
         </div>
@@ -410,10 +440,10 @@ export default function App() {
       <div style={{ marginTop: 32, padding: "16px 24px", background: "#ede0c8", borderRadius: 8, maxWidth: 600, width: "100%" }}>
         <h3 style={{ color: "#776e65", margin: "0 0 8px", fontSize: 14, fontWeight: 700 }}>Phase 2 Status</h3>
         <ul style={{ color: "#776e65", fontSize: 13, margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
-          <li>Rust types: Board, Cell, Node, Edge, GameCursor, GraphSnapshot</li>
-          <li>WASM exports: <code>create_game()</code>, <code>make_move(req)</code>, <code>get_state(id)</code></li>
+          <li>Strongly typed IDs: <code>NodeId</code>, <code>EdgeId</code>, <code>GameId</code> — content-hashed via FNV-1a</li>
+          <li>WASM exports: <code>create_game()</code>, <code>make_move(req)</code>, <code>get_state(id)</code>, <code>export_graph()</code>, <code>import_graph(json)</code></li>
           <li>JS bridge: <code>wasmBridge.ts</code> — typed JSON contract matching Rust structs</li>
-          <li>Graph panel: renders real neighborhood from WASM graph snapshot</li>
+          <li>Graph panel: renders real neighborhood from WASM graph snapshot; graph is export/import-able</li>
         </ul>
       </div>
     </div>

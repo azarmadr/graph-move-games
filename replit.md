@@ -9,6 +9,7 @@ A 2048 game where every board state across all game instances forms a global DAG
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
+- `cargo test` inside `artifacts/game-2048/wasm-game/` — run Rust unit tests
 
 ## Stack
 
@@ -37,6 +38,8 @@ A 2048 game where every board state across all game instances forms a global DAG
 - **JSON over the WASM bridge**: Cross-boundary communication uses JSON-serialized structs (`serde` + `serde-wasm-bindgen`). Explicit, debuggable, and easy to version.
 - **Client-side game state**: No server roundtrip for moves. The WASM module holds all state; the API server is reserved for future persistence/multiplayer features.
 - **DAG as a global structure**: All game instances share a single node space. Nodes are board snapshots; edges carry game ID + direction/spawn metadata. No cycles by construction (moves only go forward).
+- **Strong, content-addressed IDs**: `NodeId`, `EdgeId`, and `GameId` are strong newtypes over `u64` (not raw integers). Node and edge IDs are deterministic 64-bit FNV-1a hashes of their content, so the same board state / transition always resolves to the same ID across runs and across import/export cycles.
+- **Graph export/import**: The full WASM engine state (graph snapshot + all game cursors + nonce counter) can be serialized via `export_graph()` and restored via `import_graph(json)`. The UI exposes **Export** and **Import** buttons in the graph panel.
 - **Canvas over DOM**: Both the board and graph are rendered on HTML `<canvas>` for pixel-level control needed in the graph visualization.
 
 ## Product
