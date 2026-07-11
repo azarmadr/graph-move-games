@@ -290,6 +290,33 @@ export default function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [state]);
 
+  // Touch / swipe handler (attached to board canvas)
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
+  const onTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const t = e.touches[0];
+    touchStart.current = { x: t.clientX, y: t.clientY };
+  };
+  const onTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    e.preventDefault(); // stop pull-to-refresh and page scroll
+  };
+  const onTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const start = touchStart.current;
+    if (!start || e.changedTouches.length === 0) return;
+    const t = e.changedTouches[0];
+    const dx = t.clientX - start.x;
+    const dy = t.clientY - start.y;
+    const absDx = Math.abs(dx);
+    const absDy = Math.abs(dy);
+    const threshold = 24; // px
+    if (Math.max(absDx, absDy) < threshold) return; // tap, not swipe
+    if (absDx > absDy) {
+      handleMove(dx > 0 ? "Right" : "Left");
+    } else {
+      handleMove(dy > 0 ? "Down" : "Up");
+    }
+    touchStart.current = null;
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "#faf8ef", display: "flex", flexDirection: "column", alignItems: "center", padding: "32px 16px", fontFamily: "'Clear Sans', Arial, sans-serif" }}>
       <h1 style={{ color: "#776e65", fontSize: 36, fontWeight: 800, margin: "0 0 4px" }}>2048</h1>
@@ -306,8 +333,16 @@ export default function App() {
               SCORE: {state?.cursor.score ?? 0}
             </span>
           </div>
-          <canvas ref={boardRef} width={360} height={360} style={{ borderRadius: 8, display: "block" }} />
-          <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <canvas
+            ref={boardRef}
+            width={360}
+            height={360}
+            style={{ borderRadius: 8, display: "block", touchAction: "none" }}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
+          />
+          <div className="arrow-buttons" style={{ display: "flex", gap: 8, marginTop: 8 }}>
             {["↑","↓","←","→"].map((dir) => (
               <button
                 key={dir}

@@ -8,4 +8,13 @@ body {
   background: #faf8ef;
   font-family: "Clear Sans", "Helvetica Neue", Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+  touch-action: manipulation;
+}
+
+/* Hide arrow buttons on narrow screens; swipe is primary input */
+@media (max-width: 480px) {
+  .arrow-buttons {
+    display: none !important;
+  }
 }
