@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { loadWasm, createGame, makeMove, type GameState, type Direction, type Node, type Edge, type EdgeType } from "./wasmBridge";
+import { loadWasm, createGame, createGameWithConfig, makeMove, type GameState, type Direction, type Node, type Edge, type EdgeType, type GameConfig } from "./wasmBridge";
 
 const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
   0:    { bg: "#cdc1b4", fg: "#cdc1b4" },
@@ -21,21 +21,25 @@ function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
   const size = canvas.width;
   const padding = 12;
   const gap = 8;
-  const cellSize = (size - padding * 2 - gap * 3) / 4;
+  const [rows, cols] = state.active_board.dim;
+  const cellSize = (size - padding * 2 - gap * (Math.max(rows, cols) - 1)) / Math.max(rows, cols);
+  // Board width/height based on actual dimensions
+  const boardW = padding * 2 + cols * cellSize + (cols - 1) * gap;
+  const boardH = padding * 2 + rows * cellSize + (rows - 1) * gap;
 
   ctx.fillStyle = "#bbada0";
   ctx.beginPath();
-  ctx.roundRect(0, 0, size, size, 8);
+  ctx.roundRect(0, 0, boardW, boardH, 8);
   ctx.fill();
 
-  // Build 4x4 grid from sparse board
-  const grid: number[][] = Array.from({ length: 4 }, () => Array(4).fill(0));
+  // Build grid from sparse board
+  const grid: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
   for (const cell of state.active_board.tiles) {
     grid[cell.pos.r][cell.pos.c] = cell.tile;
   }
 
-  for (let r = 0; r < 4; r++) {
-    for (let c = 0; c < 4; c++) {
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
       const val = grid[r][c];
       const x = padding + c * (cellSize + gap);
       const y = padding + r * (cellSize + gap);
@@ -186,7 +190,8 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
     const isCur = d.isCurrent;
 
     // Grid for mini board
-    const grid: number[][] = Array.from({ length: 4 }, () => Array(4).fill(0));
+    const [mRows, mCols] = d.node.board.dim;
+    const grid: number[][] = Array.from({ length: mRows }, () => Array(mCols).fill(0));
     for (const cell of d.node.board.tiles) {
       grid[cell.pos.r][cell.pos.c] = cell.tile;
     }
@@ -214,8 +219,8 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
     ctx.stroke();
 
     // Mini tiles
-    for (let r = 0; r < 4; r++) {
-      for (let c = 0; c < 4; c++) {
+    for (let r = 0; r < mRows; r++) {
+      for (let c = 0; c < mCols; c++) {
         const val = grid[r][c];
         const colors = TILE_COLORS[val] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
         const tx = x - miniSize / 2 + 2 + c * (cellSize + 1);
@@ -252,9 +257,10 @@ export default function App() {
   const boardRef = useRef<HTMLCanvasElement>(null);
   const graphRef = useRef<HTMLCanvasElement>(null);
   const [state, setState] = useState<GameState | null>(null);
+  const [config, setConfig] = useState<GameConfig>({ rows: 4, cols: 4 });
 
   useEffect(() => {
-    loadWasm().then(() => createGame()).then((s) => setState(s));
+    loadWasm().then(() => createGameWithConfig(config)).then((s) => setState(s));
   }, []);
 
   useEffect(() => {
@@ -317,12 +323,42 @@ export default function App() {
     touchStart.current = null;
   };
 
+  const startNewGame = async (rows: number, cols: number) => {
+    const newConfig = { rows, cols };
+    setConfig(newConfig);
+    const s = await createGameWithConfig(newConfig);
+    setState(s);
+  };
+
   return (
     <div style={{ minHeight: "100vh", background: "#faf8ef", display: "flex", flexDirection: "column", alignItems: "center", padding: "32px 16px", fontFamily: "'Clear Sans', Arial, sans-serif" }}>
       <h1 style={{ color: "#776e65", fontSize: 36, fontWeight: 800, margin: "0 0 4px" }}>2048</h1>
       <p style={{ color: "#9b8f82", fontSize: 14, margin: "0 0 24px" }}>
         Rust/WASM · Phase 2 — real data model + WASM bridge
       </p>
+
+      {/* Dimension selector */}
+      <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
+        <span style={{ color: "#776e65", fontSize: 13, fontWeight: 600 }}>Board size:</span>
+        {[[3,3], [4,4], [5,5]].map(([r, c]) => (
+          <button
+            key={`${r}x${c}`}
+            onClick={() => startNewGame(r, c)}
+            style={{
+              padding: "4px 10px",
+              borderRadius: 4,
+              border: "none",
+              background: config.rows === r && config.cols === c ? "#8f7a66" : "#bbada0",
+              color: "#f9f6f2",
+              fontSize: 12,
+              fontWeight: 700,
+              cursor: "pointer",
+            }}
+          >
+            {r}×{c}
+          </button>
+        ))}
+      </div>
 
       <div style={{ display: "flex", gap: 32, flexWrap: "wrap", justifyContent: "center" }}>
         {/* Board Panel */}

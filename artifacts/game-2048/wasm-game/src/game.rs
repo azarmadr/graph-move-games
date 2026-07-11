@@ -29,12 +29,15 @@ impl Engine {
 
     /// Create a new game instance starting with a single tile.
     /// Returns the new game_id and the initial full state.
-    pub fn create_game(&mut self) -> GameState {
+    pub fn create_game(&mut self, config: &GameConfig) -> GameState {
         let game_id = self.next_game_id;
         self.next_game_id += 1;
 
+        let rows = config.rows;
+        let cols = config.cols;
+
         // Board: single tile at (0,0) with value 2
-        let start_board = Board::with_tiles(vec![Cell::new(0, 0, 2)]);
+        let start_board = Board::with_tiles(rows, cols, vec![Cell::new(0, 0, 2)]);
 
         let source_id = self.graph.alloc_node_id();
         let source = Node {

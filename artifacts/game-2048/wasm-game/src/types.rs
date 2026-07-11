@@ -31,7 +31,7 @@ impl Cell {
 /* ── Board (sparse: empties absent) ───────────────────────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Board {
-    pub dim: (u8, u8), // always (4,4)
+    pub dim: (u8, u8), // (rows, cols) — e.g. (3,3) or (4,4)
     pub tiles: Vec<Cell>,
 }
 
@@ -43,8 +43,15 @@ impl Board {
         }
     }
 
-    pub fn with_tiles(tiles: Vec<Cell>) -> Self {
-        Self { dim: (4, 4), tiles }
+    pub fn with_dim(rows: u8, cols: u8) -> Self {
+        Self {
+            dim: (rows, cols),
+            tiles: Vec::new(),
+        }
+    }
+
+    pub fn with_tiles(rows: u8, cols: u8, tiles: Vec<Cell>) -> Self {
+        Self { dim: (rows, cols), tiles }
     }
 
     pub fn tile_at(&self, r: u8, c: u8) -> Option<u32> {
@@ -199,4 +206,17 @@ pub struct MoveRequest {
 pub struct MoveResponse {
     pub game_state: GameState,
     pub delta: GraphDelta,
+}
+
+/* ── Game config from JS ─────────────────────────────────────────── */
+#[derive(Debug, Clone, Deserialize)]
+pub struct GameConfig {
+    pub rows: u8,
+    pub cols: u8,
+}
+
+impl Default for GameConfig {
+    fn default() -> Self {
+        Self { rows: 4, cols: 4 }
+    }
 }

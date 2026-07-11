@@ -11,7 +11,7 @@ export interface Cell {
 }
 
 export interface Board {
-  dim: [number, number];
+  dim: [number, number]; // [rows, cols]
   tiles: Cell[];
 }
 
@@ -75,6 +75,11 @@ export interface MoveResponse {
   delta: GraphDelta;
 }
 
+export interface GameConfig {
+  rows: number;
+  cols: number;
+}
+
 /* ── WASM module loader ────────────────────────────────────────────── */
 
 let wasmModule: any = null;
@@ -90,6 +95,12 @@ export async function loadWasm(): Promise<any> {
 export async function createGame(): Promise<GameState> {
   const m = await loadWasm();
   const json = m.create_game();
+  return JSON.parse(json) as GameState;
+}
+
+export async function createGameWithConfig(config: GameConfig): Promise<GameState> {
+  const m = await loadWasm();
+  const json = m.create_game_with_config(JSON.stringify(config));
   return JSON.parse(json) as GameState;
 }
 

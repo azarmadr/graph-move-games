@@ -17,7 +17,7 @@ thread_local! {
 
 #[wasm_bindgen]
 pub fn version() -> String {
-    "2048-wasm v0.2.0".to_string()
+    "2048-wasm v0.3.0".to_string()
 }
 
 /// Initialize the engine. Safe to call multiple times.
@@ -28,12 +28,22 @@ pub fn init() {
     });
 }
 
-/// Create a new game instance. Returns full state as JSON string.
+/// Create a new game instance with default 4x4 board. Returns full state as JSON string.
 #[wasm_bindgen]
 pub fn create_game() -> Result<String, JsValue> {
+    create_game_with_config("{\"rows\":4,\"cols\":4}".to_string())
+}
+
+/// Create a new game instance with custom dimensions.
+/// Config JSON: `{ rows: u8, cols: u8 }`
+#[wasm_bindgen]
+pub fn create_game_with_config(config_json: String) -> Result<String, JsValue> {
+    let config: GameConfig = serde_json::from_str(&config_json)
+        .map_err(|err| JsValue::from_str(&format!("parse error: {}", err)))?;
+
     ENGINE.with(|e| {
         let mut engine = e.borrow_mut();
-        let state = engine.create_game();
+        let state = engine.create_game(&config);
         serde_json::to_string(&state)
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
     })
