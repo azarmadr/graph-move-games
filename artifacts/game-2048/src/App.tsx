@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { loadWasm, createGameWithConfig, makeMove, getState, exportGraph, importGraph, type GameState, type Direction, type Node, type Edge, type GameConfig, type GameInstance } from "./wasmBridge";
+import { loadWasm, createGameWithConfig, makeMove, getState, exportGraph, importGraph, type GameState, type Direction, type Node, type Edge, type GameConfig, type GameInstance, type GraphDelta } from "./wasmBridge";
 
 const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
   0:    { bg: "#cdc1b4", fg: "#cdc1b4" },
@@ -254,6 +254,7 @@ export default function App() {
   const [config, setConfig] = useState<GameConfig>({ rows: 4, cols: 4 });
   const [allGames, setAllGames] = useState<GameInstance[]>([]);
   const [hover, setHover] = useState<{ x: number; y: number; content: React.ReactNode } | null>(null);
+  const [lastMove, setLastMove] = useState<GraphDelta | null>(null);
   const graphLayoutRef = useRef<{ nodes: Map<string, { x: number; y: number }>; edges: { edge: Edge; from: { x: number; y: number }; to: { x: number; y: number } }[] } | null>(null);
 
 
@@ -270,6 +271,7 @@ export default function App() {
     if (!state || state.game.is_terminated) return;
     try {
       const resp = await makeMove(state.active_game_id, dir);
+      setLastMove(resp.delta);
       setState(resp.game_state);
     } catch (e) {
       console.error("move failed:", e);
@@ -296,6 +298,7 @@ export default function App() {
         try {
           const { exportData, activeGameId } = JSON.parse(saved);
           const result = await importGraph(JSON.stringify(exportData));
+          setLastMove(null);
           setAllGames(result.games.map((g) => g.game));
           if (result.success && result.games.length > 0) {
             const restored = await getState(activeGameId as string);
@@ -307,6 +310,7 @@ export default function App() {
         }
       }
       const s = await createGameWithConfig(config);
+      setLastMove(null);
       setState(s);
       setAllGames((prev) => [...prev, s.game]);
     });
@@ -358,12 +362,14 @@ export default function App() {
     const newConfig = { rows, cols };
     setConfig(newConfig);
     const s = await createGameWithConfig(newConfig);
+    setLastMove(null);
     setState(s);
     setAllGames((prev) => [...prev, s.game]);
   };
 
   const selectGame = async (gameId: string) => {
     const s = await getState(gameId);
+    setLastMove(null);
     setState(s);
   };
 
@@ -464,6 +470,7 @@ export default function App() {
     try {
       const text = await navigator.clipboard.readText();
       const result = await importGraph(text);
+      setLastMove(null);
       setAllGames(result.games.map((g) => g.game));
       if (result.success && result.games.length > 0) {
         setState(result.games[0]);
@@ -536,6 +543,13 @@ export default function App() {
               </button>
             ))}
           </div>
+          {lastMove && (
+            <div style={{ marginTop: 8, padding: "4px 10px", borderRadius: 4, background: lastMove.nodes.length === 0 && lastMove.edges.length === 0 ? "#f65e3b" : "#8f7a66", color: "#f9f6f2", fontSize: 12, fontWeight: 700 }}>
+              {lastMove.nodes.length === 0 && lastMove.edges.length === 0
+                ? "Invalid move — no graph change"
+                : `Valid move · +${lastMove.nodes.length} nodes · +${lastMove.edges.length} edges · +${lastMove.score_delta} score`}
+            </div>
+          )}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
