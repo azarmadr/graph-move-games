@@ -1,107 +1,53 @@
-use crate::types::{Board, Cell, Pos, SpawnPayload};
+use crate::types::{Board, Cell, SpawnConfig, SpawnOption};
 
-/// Configuration for spawn enumeration.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SpawnConfig {
-    pub spawn_count: u8,      // tiles to spawn per step (default 1)
-    pub max_outcomes: usize, // cap (default 32)
-}
-
-impl Default for SpawnConfig {
-    fn default() -> Self {
-        Self {
-            spawn_count: 1,
-            max_outcomes: 32,
-        }
-    }
-}
-
-/// Enumerate all distinct spawn outcomes for a given board.
-/// Each outcome is a set of cells placed on empty positions.
-/// Outcomes are deduplicated by exact multiset of (pos, tile).
-/// Capped by max_outcomes; sorted deterministically.
-pub fn enumerate_spawn_outcomes(board: &Board, config: &SpawnConfig) -> Vec<SpawnPayload> {
+/// Sample a deterministic spawn outcome for the given board.
+///
+/// model.md: spawned_cells = sample_spawn(Bm, config.spawnConfig)
+///
+/// For now, spawns one tile of value 2 at the lexicographically first empty
+/// cell. Probability weights are parsed but not yet used for randomness; the
+/// first option's value is always spawned.
+pub fn sample_spawn(board: &Board, config: &SpawnConfig) -> Vec<Cell> {
     let empties = board.empty_positions();
     if empties.is_empty() {
-        return vec![SpawnPayload { cells: vec![] }];
+        return Vec::new();
     }
 
-    if config.spawn_count == 1 {
-        // Single-tile spawn: one outcome per empty cell
-        let mut outcomes: Vec<SpawnPayload> = empties
-            .iter()
-            .map(|pos| SpawnPayload {
-                cells: vec![Cell::new(pos.r, pos.c, 2)], // default value 2
-            })
-            .collect();
-
-        // Stable deterministic sort by (r, c)
-        outcomes.sort_by(|a, b| {
-            let a_key = a.cells.iter().map(|c| (c.pos.r, c.pos.c, c.tile)).collect::<Vec<_>>();
-            let b_key = b.cells.iter().map(|c| (c.pos.r, c.pos.c, c.tile)).collect::<Vec<_>>();
-            a_key.cmp(&b_key)
+    let option = config
+        .spawns
+        .first()
+        .cloned()
+        .unwrap_or(SpawnOption {
+            value: 2,
+            probability: 1_000_000,
         });
 
-        // Deduplicate
-        outcomes.dedup_by(|a, b| {
-            let a_key = a.cells.iter().map(|c| (c.pos.r, c.pos.c, c.tile)).collect::<Vec<_>>();
-            let b_key = b.cells.iter().map(|c| (c.pos.r, c.pos.c, c.tile)).collect::<Vec<_>>();
-            a_key == b_key
-        });
-
-        if outcomes.len() > config.max_outcomes {
-            outcomes.truncate(config.max_outcomes);
-        }
-        outcomes
-    } else {
-        // Multi-tile spawn: generate combinations
-        let mut outcomes: Vec<SpawnPayload> = Vec::new();
-        generate_combinations(
-            &empties,
-            config.spawn_count as usize,
-            &mut Vec::new(),
-            &mut outcomes,
-        );
-
-        // Deduplicate by exact multiset
-        outcomes.sort_by(|a, b| {
-            let a_key = a.cells.iter().map(|c| (c.pos.r, c.pos.c, c.tile)).collect::<Vec<_>>();
-            let b_key = b.cells.iter().map(|c| (c.pos.r, c.pos.c, c.tile)).collect::<Vec<_>>();
-            a_key.cmp(&b_key)
-        });
-        outcomes.dedup_by(|a, b| {
-            let a_key = a.cells.iter().map(|c| (c.pos.r, c.pos.c, c.tile)).collect::<Vec<_>>();
-            let b_key = b.cells.iter().map(|c| (c.pos.r, c.pos.c, c.tile)).collect::<Vec<_>>();
-            a_key == b_key
-        });
-
-        if outcomes.len() > config.max_outcomes {
-            outcomes.truncate(config.max_outcomes);
-        }
-        outcomes
-    }
+    // Deterministic: always pick the first empty cell.
+    let pos = empties[0];
+    vec![Cell::new(pos.r, pos.c, option.value)]
 }
 
-fn generate_combinations(
-    empties: &[Pos],
-    k: usize,
-    current: &mut Vec<Cell>,
-    outcomes: &mut Vec<SpawnPayload>,
-) {
-    if current.len() == k {
-        outcomes.push(SpawnPayload {
-            cells: current.clone(),
-        });
-        return;
-    }
+/// List all possible spawn outcomes for a board. Useful for enumeration and
+/// future probabilistic branching. Each outcome is a single tile placed on an
+/// empty cell, using the first configured spawn value.
+#[allow(dead_code)]
+pub fn all_spawn_outcomes(board: &Board, config: &SpawnConfig) -> Vec<Vec<Cell>> {
+    let empties = board.empty_positions();
     if empties.is_empty() {
-        return;
+        return vec![Vec::new()];
     }
 
-    for i in 0..empties.len() {
-        let pos = empties[i];
-        current.push(Cell::new(pos.r, pos.c, 2));
-        generate_combinations(&empties[i + 1..], k, current, outcomes);
-        current.pop();
-    }
+    let option = config
+        .spawns
+        .first()
+        .cloned()
+        .unwrap_or(SpawnOption {
+            value: 2,
+            probability: 1_000_000,
+        });
+
+    empties
+        .into_iter()
+        .map(|pos| vec![Cell::new(pos.r, pos.c, option.value)])
+        .collect()
 }

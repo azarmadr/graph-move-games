@@ -37,6 +37,7 @@ pub struct Board {
     pub tiles: Vec<Cell>,
 }
 
+#[allow(dead_code)]
 impl Board {
     pub fn empty() -> Self {
         Self {
@@ -58,11 +59,6 @@ impl Board {
 
     pub fn tile_at(&self, r: u8, c: u8) -> Option<u32> {
         self.tiles.iter().find(|t| t.pos.r == r && t.pos.c == c).map(|t| t.tile)
-    }
-
-    /// Returns true if the board has at least one empty cell.
-    pub fn has_empty(&self) -> bool {
-        self.tiles.len() < (self.dim.0 as usize) * (self.dim.1 as usize)
     }
 
     /// Positions of empty cells.
@@ -119,13 +115,6 @@ macro_rules! strong_id {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
         pub struct $name(pub u64);
 
-        impl $name {
-            #[allow(dead_code)]
-            pub const fn zero() -> Self {
-                Self(0)
-            }
-        }
-
         impl std::fmt::Display for $name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 write!(f, "{}", self.0)
@@ -139,37 +128,23 @@ strong_id!(EdgeId);
 strong_id!(GameId);
 
 impl NodeId {
-    /// Content-addressed ID: hash of the board + node kind.
-    ///
-    /// Source/Regular nodes for the same board share the same ID across games,
-    /// while Sink nodes are game-specific (and include their status).
-    pub fn from_content(board: &Board, kind: &NodeKind) -> Self {
+    /// Content-addressed ID: hash of the board content only.
+    /// All board states are globally deduplicated by this ID.
+    pub fn from_board(board: &Board) -> Self {
         let mut h = Fnv1a::new();
         board.hash_content(&mut h);
-        match kind {
-            NodeKind::Source => { h.write_u8(0); }
-            NodeKind::Regular => { h.write_u8(1); }
-            NodeKind::Sink { game_id, status } => {
-                h.write_u8(2);
-                h.write_u64(game_id.0);
-                h.write_u8(match status {
-                    GameStatus::Active => 0,
-                    GameStatus::Terminated => 1,
-                });
-            }
-        }
         Self(h.finish())
     }
 }
 
 impl EdgeId {
-    /// Content-addressed ID: hash of (from, to, edge_type).
-    pub fn from_content(from: NodeId, to: NodeId, edge_type: &EdgeType) -> Self {
+    /// Content-addressed ID: hash of (from, to, kind).
+    pub fn from_content(from: NodeId, to: NodeId, kind: &EdgeKind) -> Self {
         let mut h = Fnv1a::new();
         h.write_u64(from.0);
         h.write_u64(to.0);
-        match edge_type {
-            EdgeType::Move { direction } => {
+        match kind {
+            EdgeKind::Move { direction } => {
                 h.write_u8(0);
                 h.write_u8(match direction {
                     Direction::Up => 0,
@@ -178,9 +153,9 @@ impl EdgeId {
                     Direction::Right => 3,
                 });
             }
-            EdgeType::Spawn { spawn } => {
+            EdgeKind::Spawn { cells } => {
                 h.write_u8(1);
-                for cell in &spawn.cells {
+                for cell in cells {
                     h.write_u8(cell.pos.r);
                     h.write_u8(cell.pos.c);
                     h.write_u32(cell.tile);
@@ -199,25 +174,11 @@ impl GameId {
     }
 }
 
-/* ── Node kinds and nodes ────────────────────────────────────────── */
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum GameStatus {
-    Active,
-    Terminated,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum NodeKind {
-    Source,
-    Regular,
-    Sink { game_id: GameId, status: GameStatus },
-}
-
+/* ── Nodes (board states are deduplicated by NodeId) ─────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
     pub node_id: NodeId,
     pub board: Board,
-    pub kind: NodeKind,
 }
 
 /* ── Edges ──────────────────────────────────────────────────────── */
@@ -229,15 +190,15 @@ pub enum Direction {
     Right,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SpawnPayload {
     pub cells: Vec<Cell>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EdgeType {
+pub enum EdgeKind {
     Move { direction: Direction },
-    Spawn { spawn: SpawnPayload },
+    Spawn { cells: Vec<Cell> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -245,41 +206,46 @@ pub struct Edge {
     pub edge_id: EdgeId,
     pub from: NodeId,
     pub to: NodeId,
-    pub edge_type: EdgeType,
+    pub kind: EdgeKind,
 }
 
-/* ── Graph delta (what changed in one extend_path call) ───────────────────── */
+/* ── Graph delta (what changed in one extend_path call) ─────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphDelta {
-    pub nodes_added: Vec<Node>,
-    pub edges_added: Vec<Edge>,
     pub is_terminated: bool,
+    pub nodes: Vec<Node>,
+    pub edges: Vec<Edge>,
+    pub current_node_id: NodeId,
+    pub score_delta: u64,
 }
 
 impl GraphDelta {
-    pub fn empty(terminated: bool) -> Self {
+    pub fn empty(terminated: bool, current_node_id: NodeId) -> Self {
         Self {
-            nodes_added: Vec::new(),
-            edges_added: Vec::new(),
             is_terminated: terminated,
+            nodes: Vec::new(),
+            edges: Vec::new(),
+            current_node_id,
+            score_delta: 0,
         }
     }
 }
 
-/* ── Game cursor / frontier state ───────────────────────────────────────── */
+/* ── Game instance (matches model.md) ──────────────────────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GameCursor {
+pub struct GameInstance {
     pub game_id: GameId,
-    pub sink_id: NodeId,
-    pub status: GameStatus,
+    pub source_node_id: NodeId,
+    pub current_node_id: NodeId,
     pub score: u64,
+    pub is_terminated: bool,
 }
 
 /* ── Full state returned to JS ───────────────────────────────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameState {
     pub active_game_id: GameId,
-    pub cursor: GameCursor,
+    pub game: GameInstance,
     pub active_board: Board,
     pub graph: GraphSnapshot,
 }
@@ -303,16 +269,44 @@ pub struct MoveResponse {
     pub delta: GraphDelta,
 }
 
+/* ── Spawn configuration ─────────────────────────────────────────── */
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnConfig {
+    pub spawns: Vec<SpawnOption>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnOption {
+    pub value: u32,
+    pub probability: u64, // fixed-point: probability / 1_000_000
+}
+
+impl Default for SpawnConfig {
+    fn default() -> Self {
+        Self {
+            spawns: vec![SpawnOption {
+                value: 2,
+                probability: 1_000_000, // 100%
+            }],
+        }
+    }
+}
+
 /* ── Game config from JS ─────────────────────────────────────────── */
 #[derive(Debug, Clone, Deserialize)]
 pub struct GameConfig {
     pub rows: u8,
     pub cols: u8,
+    pub spawn_config: Option<SpawnConfig>,
 }
 
 impl Default for GameConfig {
     fn default() -> Self {
-        Self { rows: 4, cols: 4 }
+        Self {
+            rows: 4,
+            cols: 4,
+            spawn_config: None,
+        }
     }
 }
 
@@ -321,7 +315,7 @@ impl Default for GameConfig {
 pub struct ExportData {
     pub version: u32,
     pub graph: GraphSnapshot,
-    pub games: Vec<GameCursor>,
+    pub games: Vec<GameInstance>,
     pub next_game_nonce: u64,
 }
 

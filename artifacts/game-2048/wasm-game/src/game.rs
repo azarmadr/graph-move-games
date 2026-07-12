@@ -2,19 +2,13 @@ use std::collections::HashMap;
 
 use crate::graph::GraphStore;
 use crate::move_logic::resolve_move;
-use crate::spawn::{enumerate_spawn_outcomes, SpawnConfig};
+use crate::spawn::sample_spawn;
 use crate::types::*;
-
-/// Per-game state: the active frontier sink and cumulative score.
-struct GameInstance {
-    cursor: GameCursor,
-}
 
 pub struct Engine {
     graph: GraphStore,
     games: HashMap<GameId, GameInstance>,
     next_game_nonce: u64,
-    spawn_config: SpawnConfig,
 }
 
 impl Engine {
@@ -23,260 +17,156 @@ impl Engine {
             graph: GraphStore::new(),
             games: HashMap::new(),
             next_game_nonce: 1,
-            spawn_config: SpawnConfig::default(),
         }
     }
 
-    /// Create a new game instance starting with a single tile.
-    /// Returns the new game_id and the initial full state.
-    pub fn create_game(&mut self, config: &GameConfig) -> GameState {
+    /// Create a new game instance with a single starting tile at (0,0).
+    /// The source node and current node are the same board state.
+    pub fn create_game(&mut self, config: &GameConfig) -> Result<GameState, String> {
         let game_id = GameId::from_nonce(self.next_game_nonce);
         self.next_game_nonce += 1;
 
+        let _spawn_config = config.spawn_config.clone().unwrap_or_default();
         let rows = config.rows;
         let cols = config.cols;
 
-        // Board: single tile at (0,0) with value 2
         let start_board = Board::with_tiles(rows, cols, vec![Cell::new(0, 0, 2)]);
+        let (start_node, _) = self.graph.get_or_create_node(start_board.clone());
 
-        let source_id = self.graph.insert_node(start_board.clone(), NodeKind::Source).node_id;
-
-        let sink_id = self.graph
-            .insert_node(
-                start_board.clone(),
-                NodeKind::Sink {
-                    game_id,
-                    status: GameStatus::Active,
-                },
-            )
-            .node_id;
-
-        self.graph.insert_edge(
-            source_id,
-            sink_id,
-            EdgeType::Spawn {
-                spawn: SpawnPayload {
-                    cells: vec![Cell::new(0, 0, 2)],
-                },
-            },
-        );
-
-        let cursor = GameCursor {
+        let game = GameInstance {
             game_id,
-            sink_id,
-            status: GameStatus::Active,
+            source_node_id: start_node.node_id,
+            current_node_id: start_node.node_id,
             score: 0,
+            is_terminated: false,
         };
 
-        self.games.insert(
-            game_id,
-            GameInstance {
-                cursor: cursor.clone(),
-            },
-        );
+        self.games.insert(game_id, game.clone());
 
-        GameState {
+        Ok(GameState {
             active_game_id: game_id,
-            cursor,
+            game,
             active_board: start_board,
             graph: self.graph.snapshot(),
-        }
+        })
     }
 
     /// Apply a move to a game instance.
-    /// Returns the new full state + graph delta.
-    pub fn make_move(&mut self, req: MoveRequest) -> MoveResponse {
-        let game = match self.games.get_mut(&req.game_id) {
-            Some(g) => g,
-            None => {
-                // Unknown game: return empty state
-                return MoveResponse {
-                    game_state: self.empty_state(req.game_id),
-                    delta: GraphDelta::empty(true),
-                };
-            }
-        };
+    ///
+    /// model.md transition logic:
+    /// current -> merged -> spawned (two edges: Move, then Spawn).
+    pub fn make_move(&mut self, req: MoveRequest) -> Result<MoveResponse, String> {
+        let game = self
+            .games
+            .get(&req.game_id)
+            .cloned()
+            .ok_or_else(|| format!("game {} not found", req.game_id))?;
 
-        // If already terminated, no-op
-        if game.cursor.status == GameStatus::Terminated {
-            let cursor = game.cursor.clone();
-            let board = self
-                .graph
-                .get_node(cursor.sink_id)
-                .map(|n| n.board.clone())
-                .unwrap_or_else(Board::empty);
-            return MoveResponse {
-                game_state: GameState {
-                    active_game_id: req.game_id,
-                    cursor,
-                    active_board: board,
-                    graph: self.graph.snapshot(),
-                },
-                delta: GraphDelta::empty(true),
-            };
+        let current_node = self
+            .graph
+            .get_node(game.current_node_id)
+            .ok_or_else(|| format!("current node {} not found", game.current_node_id))?;
+
+        // Case 1: already terminated
+        if game.is_terminated {
+            return Ok(MoveResponse {
+                game_state: self.build_state(game.clone()),
+                delta: GraphDelta::empty(true, game.current_node_id),
+            });
         }
 
-        let old_sink_id = game.cursor.sink_id;
-        let old_sink = match self.graph.get_node(old_sink_id) {
-            Some(n) => n.clone(),
-            None => {
-                return MoveResponse {
-                    game_state: self.empty_state(req.game_id),
-                    delta: GraphDelta::empty(false),
-                };
-            }
-        };
-
-        // 1. Resolve merge-only move
-        let (merged_board, merge_score, valid) = resolve_move(&old_sink.board, req.direction);
-
+        // Case 2/3: resolve merge
+        let (merged_board, merge_score, valid) = resolve_move(&current_node.board, req.direction);
         if !valid {
-            // Invalid: no structural changes, cursor/score unchanged
-            let cursor = game.cursor.clone();
-            let board = old_sink.board.clone();
-            return MoveResponse {
-                game_state: GameState {
-                    active_game_id: req.game_id,
-                    cursor,
-                    active_board: board,
-                    graph: self.graph.snapshot(),
-                },
-                delta: GraphDelta::empty(false),
-            };
+            return Ok(MoveResponse {
+                game_state: self.build_state(game.clone()),
+                delta: GraphDelta::empty(false, game.current_node_id),
+            });
         }
 
-        // 2. Convert old sink to a shared Regular node. With content-addressed IDs
-        // the Regular node may already exist from another game; overwriting it
-        // with the same content is harmless. The old Sink node remains in the
-        // graph with its game-specific ID so existing edges remain valid.
-        self.graph.insert_node(old_sink.board.clone(), NodeKind::Regular);
+        // Step 3: merged node
+        let (merge_node, merge_created) = self.graph.get_or_create_node(merged_board.clone());
 
-        // 3. Enumerate spawn outcomes
-        let outcomes = enumerate_spawn_outcomes(&merged_board, &self.spawn_config);
+        // Step 4/5: spawn
+        let _spawn_config = SpawnConfig::default(); // TODO: store per-game config
+        let spawn_cells = sample_spawn(&merged_board, &_spawn_config);
+        let spawned_board = spawn_cells
+            .iter()
+            .fold(merged_board.clone(), |b, cell| b.set(cell.pos.r, cell.pos.c, cell.tile));
+        let (spawn_node, spawn_created) = self.graph.get_or_create_node(spawned_board.clone());
 
-        let mut new_nodes: Vec<Node> = Vec::new();
-        let mut new_edges: Vec<Edge> = Vec::new();
+        // Step 7: termination check
+        let is_terminated = !has_any_valid_move_helper(&spawned_board);
 
-        // 4. For each spawn outcome, create a new Sink
-        let mut chosen_sink_id = old_sink_id; // fallback (should not happen)
-
-        for (idx, outcome) in outcomes.iter().enumerate() {
-            let mut board = merged_board.clone();
-            for cell in &outcome.cells {
-                board = board.set(cell.pos.r, cell.pos.c, cell.tile);
-            }
-
-            let has_moves = has_any_valid_move(&board);
-            let status = if has_moves {
-                GameStatus::Active
-            } else {
-                GameStatus::Terminated
-            };
-
-            let new_sink = self.graph.insert_node(
-                board.clone(),
-                NodeKind::Sink {
-                    game_id: req.game_id,
-                    status,
-                },
-            );
-            new_nodes.push(new_sink.clone());
-
-            // Move edge (old_sink -> new_sink)
-            let move_edge = self.graph.insert_edge(
-                old_sink_id,
-                new_sink.node_id,
-                EdgeType::Move {
-                    direction: req.direction,
-                },
-            );
-            new_edges.push(move_edge);
-
-            // Spawn edge (old_sink -> new_sink)
-            let spawn_edge = self.graph.insert_edge(
-                old_sink_id,
-                new_sink.node_id,
-                EdgeType::Spawn {
-                    spawn: outcome.clone(),
-                },
-            );
-            new_edges.push(spawn_edge);
-
-            if idx == 0 {
-                // Deterministic branch choice: first outcome by stable ordering
-                chosen_sink_id = new_sink.node_id;
-            }
-        }
-
-        // 5. Update cursor to chosen sink
-        let new_score = game.cursor.score + merge_score as u64;
-        let chosen_status = self
-            .graph
-            .get_node(chosen_sink_id)
-            .map(|n| match &n.kind {
-                NodeKind::Sink { status, .. } => *status,
-                _ => GameStatus::Active,
-            })
-            .unwrap_or(GameStatus::Active);
-
-        game.cursor = GameCursor {
+        // Step 8: update game instance
+        let new_score = game.score + merge_score as u64;
+        let new_game = GameInstance {
             game_id: req.game_id,
-            sink_id: chosen_sink_id,
-            status: chosen_status,
+            source_node_id: game.source_node_id,
+            current_node_id: spawn_node.node_id,
             score: new_score,
+            is_terminated,
+        };
+        self.games.insert(req.game_id, new_game.clone());
+
+        // Step 9: build delta
+        let mut delta_nodes = Vec::new();
+        if merge_created {
+            delta_nodes.push(merge_node.clone());
+        }
+        if spawn_created {
+            delta_nodes.push(spawn_node.clone());
+        }
+
+        let move_edge = self.graph.insert_edge(
+            game.current_node_id,
+            merge_node.node_id,
+            EdgeKind::Move {
+                direction: req.direction,
+            },
+        );
+        let spawn_edge = self.graph.insert_edge(
+            merge_node.node_id,
+            spawn_node.node_id,
+            EdgeKind::Spawn {
+                cells: spawn_cells,
+            },
+        );
+
+        let delta = GraphDelta {
+            is_terminated,
+            nodes: delta_nodes,
+            edges: vec![move_edge, spawn_edge],
+            current_node_id: spawn_node.node_id,
+            score_delta: merge_score as u64,
         };
 
-        let active_board = self
-            .graph
-            .get_node(chosen_sink_id)
-            .map(|n| n.board.clone())
-            .unwrap_or_else(Board::empty);
-
-        let is_terminated = chosen_status == GameStatus::Terminated;
-
-        MoveResponse {
-            game_state: GameState {
-                active_game_id: req.game_id,
-                cursor: game.cursor.clone(),
-                active_board,
-                graph: self.graph.snapshot(),
-            },
-                delta: GraphDelta {
-                nodes_added: new_nodes,
-                edges_added: new_edges,
-                is_terminated,
-            },
-        }
+        Ok(MoveResponse {
+            game_state: self.build_state(new_game),
+            delta,
+        })
     }
 
-    pub fn get_state(&self, game_id: GameId) -> GameState {
-        match self.games.get(&game_id) {
-            Some(game) => {
-                let board = self
-                    .graph
-                    .get_node(game.cursor.sink_id)
-                    .map(|n| n.board.clone())
-                    .unwrap_or_else(Board::empty);
-                GameState {
-                    active_game_id: game_id,
-                    cursor: game.cursor.clone(),
-                    active_board: board,
-                    graph: self.graph.snapshot(),
-                }
-            }
-            None => self.empty_state(game_id),
-        }
+    pub fn get_state(&self, game_id: GameId) -> Result<GameState, String> {
+        let game = self
+            .games
+            .get(&game_id)
+            .ok_or_else(|| format!("game {} not found", game_id))?;
+        Ok(self.build_state(game.clone()))
     }
 
     pub fn all_game_states(&self) -> Vec<GameState> {
-        self.games.keys().map(|&id| self.get_state(id)).collect()
+        self.games
+            .values()
+            .map(|g| self.build_state(g.clone()))
+            .collect()
     }
 
     pub fn export(&self) -> ExportData {
         ExportData {
             version: 1,
             graph: self.graph.snapshot(),
-            games: self.games.values().map(|g| g.cursor.clone()).collect(),
+            games: self.games.values().cloned().collect(),
             next_game_nonce: self.next_game_nonce,
         }
     }
@@ -284,13 +174,8 @@ impl Engine {
     pub fn import(&mut self, data: ExportData) -> ImportResult {
         self.graph.load_snapshot(data.graph);
         self.games.clear();
-        for cursor in data.games {
-            self.games.insert(
-                cursor.game_id,
-                GameInstance {
-                    cursor: cursor.clone(),
-                },
-            );
+        for game in data.games {
+            self.games.insert(game.game_id, game);
         }
         self.next_game_nonce = data.next_game_nonce;
         ImportResult {
@@ -299,23 +184,23 @@ impl Engine {
         }
     }
 
-    fn empty_state(&self, game_id: GameId) -> GameState {
+    fn build_state(&self, game: GameInstance) -> GameState {
+        let board = self
+            .graph
+            .get_node(game.current_node_id)
+            .map(|n| n.board.clone())
+            .unwrap_or_else(Board::empty);
         GameState {
-            active_game_id: game_id,
-            cursor: GameCursor {
-                game_id,
-                sink_id: NodeId::zero(),
-                status: GameStatus::Terminated,
-                score: 0,
-            },
-            active_board: Board::empty(),
+            active_game_id: game.game_id,
+            game,
+            active_board: board,
             graph: self.graph.snapshot(),
         }
     }
 }
 
 /// Check if any direction produces a valid move from this board.
-fn has_any_valid_move(board: &Board) -> bool {
+fn has_any_valid_move_helper(board: &Board) -> bool {
     use Direction::*;
     for dir in [Up, Down, Left, Right] {
         let (_, _, valid) = resolve_move(board, dir);
@@ -324,4 +209,89 @@ fn has_any_valid_move(board: &Board) -> bool {
         }
     }
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_game_initial_state() {
+        let mut engine = Engine::new();
+        let state = engine.create_game(&GameConfig::default()).unwrap();
+        assert_eq!(state.graph.nodes.len(), 1);
+        assert_eq!(state.graph.edges.len(), 0);
+        assert_eq!(state.game.source_node_id, state.game.current_node_id);
+        assert_eq!(state.game.score, 0);
+        assert!(!state.game.is_terminated);
+    }
+
+    #[test]
+    fn test_valid_move_creates_two_nodes_and_two_edges() {
+        let mut engine = Engine::new();
+        let state = engine.create_game(&GameConfig::default()).unwrap();
+        let current_id = state.game.current_node_id;
+
+        // Board: single tile at (0,0). Move Left is invalid (no change).
+        // Move Right is also invalid in this case because the tile is at the right edge? Wait, (0,0) is left edge. Move Right shifts to (0,1). Valid.
+        let resp = engine.make_move(MoveRequest {
+            game_id: state.active_game_id,
+            direction: Direction::Right,
+        }).unwrap();
+
+        let new_state = resp.game_state;
+        let new_current = new_state.game.current_node_id;
+        assert_ne!(new_current, current_id);
+        assert_eq!(new_state.graph.nodes.len(), 3); // start, merged, spawned
+        assert_eq!(new_state.graph.edges.len(), 2); // move and spawn
+        assert_eq!(new_state.game.score, 0); // no merge yet
+        assert!(!new_state.game.is_terminated);
+
+        // Verify edge chain: current -> merge -> spawned
+        let move_edge = new_state.graph.edges.iter().find(|e| matches!(e.kind, EdgeKind::Move { direction: Direction::Right })).unwrap();
+        assert_eq!(move_edge.from, current_id);
+
+        let spawn_edge = new_state.graph.edges.iter().find(|e| matches!(e.kind, EdgeKind::Spawn { .. })).unwrap();
+        assert_eq!(spawn_edge.from, move_edge.to);
+        assert_eq!(spawn_edge.to, new_current);
+    }
+
+    #[test]
+    fn test_invalid_move_no_change() {
+        let mut engine = Engine::new();
+        let state = engine.create_game(&GameConfig::default()).unwrap();
+        let current_id = state.game.current_node_id;
+
+        // Move Left from (0,0) is invalid because the tile is already at the left edge.
+        let resp = engine.make_move(MoveRequest {
+            game_id: state.active_game_id,
+            direction: Direction::Left,
+        }).unwrap();
+
+        assert_eq!(resp.game_state.game.current_node_id, current_id);
+        assert_eq!(resp.delta.nodes.len(), 0);
+        assert_eq!(resp.delta.edges.len(), 0);
+        assert_eq!(resp.delta.score_delta, 0);
+    }
+
+    #[test]
+    fn test_export_import_roundtrip() {
+        let mut engine = Engine::new();
+        let state = engine.create_game(&GameConfig::default()).unwrap();
+        let game_id = state.active_game_id;
+
+        // Make a move so we have some graph structure
+        engine.make_move(MoveRequest { game_id, direction: Direction::Right }).unwrap();
+
+        let export = engine.export();
+        let mut engine2 = Engine::new();
+        let result = engine2.import(export);
+
+        assert!(result.success);
+        assert_eq!(result.games.len(), 1);
+        let imported_state = engine2.get_state(game_id).unwrap();
+        assert_eq!(imported_state.game.score, 0);
+        assert_eq!(imported_state.graph.nodes.len(), 3);
+        assert_eq!(imported_state.graph.edges.len(), 2);
+    }
 }

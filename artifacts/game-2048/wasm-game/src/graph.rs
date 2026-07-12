@@ -2,37 +2,45 @@ use std::collections::HashMap;
 
 use crate::types::*;
 
-/// The global DAG store. All nodes and edges live here.
+/// The global DAG store.
 ///
-/// IDs are content-addressed: inserting the same board+kind or the same
-/// (from, to, edge_type) returns the same ID, which makes the graph naturally
-/// shareable across games and stable across import/export cycles.
+/// Nodes are keyed by their content-addressed board hash (NodeId), enforcing
+/// deduplication: the same board state always resolves to the same node.
+/// Edges are stored as a Vec because transitions are append-only.
 pub struct GraphStore {
     nodes: HashMap<NodeId, Node>,
-    edges: HashMap<EdgeId, Edge>,
+    edges: Vec<Edge>,
 }
 
 impl GraphStore {
     pub fn new() -> Self {
         Self {
             nodes: HashMap::new(),
-            edges: HashMap::new(),
+            edges: Vec::new(),
         }
     }
 
-    /// Insert a node and return the stored node (with its content-addressed ID).
-    pub fn insert_node(&mut self, board: Board, kind: NodeKind) -> Node {
-        let node_id = NodeId::from_content(&board, &kind);
-        let node = Node { node_id, board, kind };
+    /// Get an existing node for a board, or create one if it doesn't exist.
+    /// Returns the node and a flag indicating whether it was newly created.
+    pub fn get_or_create_node(&mut self, board: Board) -> (Node, bool) {
+        let node_id = NodeId::from_board(&board);
+        if let Some(existing) = self.nodes.get(&node_id) {
+            return (existing.clone(), false);
+        }
+        let node = Node { node_id, board };
         self.nodes.insert(node_id, node.clone());
-        node
+        (node, true)
     }
 
-    /// Insert an edge and return the stored edge (with its content-addressed ID).
-    pub fn insert_edge(&mut self, from: NodeId, to: NodeId, edge_type: EdgeType) -> Edge {
-        let edge_id = EdgeId::from_content(from, to, &edge_type);
-        let edge = Edge { edge_id, from, to, edge_type };
-        self.edges.insert(edge_id, edge.clone());
+    /// Insert an edge. With content-addressed edge IDs, identical transitions
+    /// from different games converge to the same edge ID.
+    pub fn insert_edge(&mut self, from: NodeId, to: NodeId, kind: EdgeKind) -> Edge {
+        let edge_id = EdgeId::from_content(from, to, &kind);
+        let edge = Edge { edge_id, from, to, kind };
+        // Avoid duplicate edges with the same ID.
+        if self.edges.iter().find(|e| e.edge_id == edge_id).is_none() {
+            self.edges.push(edge.clone());
+        }
         edge
     }
 
@@ -45,7 +53,7 @@ impl GraphStore {
     }
 
     pub fn all_edges(&self) -> Vec<Edge> {
-        self.edges.values().cloned().collect()
+        self.edges.clone()
     }
 
     pub fn snapshot(&self) -> GraphSnapshot {
@@ -56,8 +64,6 @@ impl GraphStore {
     }
 
     /// Replace the entire store with the given snapshot. Used during import.
-    /// Caller is responsible for ensuring the imported IDs are canonical;
-    /// this just trusts the provided snapshot.
     pub fn load_snapshot(&mut self, snapshot: GraphSnapshot) {
         self.nodes.clear();
         self.edges.clear();
@@ -65,7 +71,7 @@ impl GraphStore {
             self.nodes.insert(node.node_id, node);
         }
         for edge in snapshot.edges {
-            self.edges.insert(edge.edge_id, edge);
+            self.insert_edge(edge.from, edge.to, edge.kind);
         }
     }
 }

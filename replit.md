@@ -37,9 +37,11 @@ A 2048 game where every board state across all game instances forms a global DAG
 - **Rust/WASM for game logic**: All move resolution, graph management, and spawn logic lives in Rust for correctness guarantees and performance. JS handles input, rendering, and timing only.
 - **JSON over the WASM bridge**: Cross-boundary communication uses JSON-serialized structs (`serde` + `serde-wasm-bindgen`). Explicit, debuggable, and easy to version.
 - **Client-side game state**: No server roundtrip for moves. The WASM module holds all state; the API server is reserved for future persistence/multiplayer features.
-- **DAG as a global structure**: All game instances share a single node space. Nodes are board snapshots; edges carry game ID + direction/spawn metadata. No cycles by construction (moves only go forward).
-- **Strong, content-addressed IDs**: `NodeId`, `EdgeId`, and `GameId` are strong newtypes over `u64` (not raw integers). Node and edge IDs are deterministic 64-bit FNV-1a hashes of their content, so the same board state / transition always resolves to the same ID across runs and across import/export cycles.
-- **Graph export/import**: The full WASM engine state (graph snapshot + all game cursors + nonce counter) can be serialized via `export_graph()` and restored via `import_graph(json)`. The UI exposes **Export** and **Import** buttons in the graph panel.
+- **DAG as a global structure**: All game instances share a single node space. Nodes are board snapshots; edges carry direction/spawn metadata. No cycles by construction (moves only go forward).
+- **Nodes are pure board states**: Per `model.md`, a node is just `{ nodeId, board }`. There is no `NodeKind` (Source/Regular/Sink); game frontier is tracked in the `GameInstance`.
+- **Atomic transitions are two-step**: A valid move creates a `Move` edge from the current node to a merge node, then a `Spawn` edge from the merge node to the new current node. This matches the `extend_path` semantics in `model.md`.
+- **Strong, content-addressed IDs**: `NodeId`, `EdgeId`, and `GameId` are strong newtypes over `u64` (not raw integers). Node IDs are board-content hashes; edge IDs hash `(from, to, kind)`. Same board state / transition always resolves to the same ID across runs and import/export cycles.
+- **Graph export/import**: The full WASM engine state (graph snapshot + all game instances + nonce counter) can be serialized via `export_graph()` and restored via `import_graph(json)`. The UI exposes **Export** and **Import** buttons in the graph panel.
 - **Canvas over DOM**: Both the board and graph are rendered on HTML `<canvas>` for pixel-level control needed in the graph visualization.
 
 ## Product

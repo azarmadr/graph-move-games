@@ -100,7 +100,7 @@ fn reverse(v: &[u32]) -> Vec<u32> {
 /// Returns (merged_line, score_gained).
 /// Each tile merges at most once per move.
 fn merge_line(line: &[u32]) -> (Vec<u32>, u32) {
-    let mut filtered: Vec<u32> = line.iter().filter(|&&x| x != 0).copied().collect();
+    let filtered: Vec<u32> = line.iter().filter(|&&x| x != 0).copied().collect();
     let mut merged: Vec<u32> = Vec::new();
     let mut score: u32 = 0;
     let mut i = 0;

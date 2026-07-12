@@ -18,7 +18,7 @@ thread_local! {
 
 #[wasm_bindgen]
 pub fn version() -> String {
-    "2048-wasm v0.4.0".to_string()
+    "2048-wasm v0.5.0".to_string()
 }
 
 /// Initialize the engine. Safe to call multiple times.
@@ -36,7 +36,7 @@ pub fn create_game() -> Result<String, JsValue> {
 }
 
 /// Create a new game instance with custom dimensions.
-/// Config JSON: `{ rows: u8, cols: u8 }`
+/// Config JSON: `{ rows: u8, cols: u8, spawn_config?: { spawns: [{ value: u32, probability: u64 }] } }`
 #[wasm_bindgen]
 pub fn create_game_with_config(config_json: String) -> Result<String, JsValue> {
     let config: GameConfig = serde_json::from_str(&config_json)
@@ -44,7 +44,8 @@ pub fn create_game_with_config(config_json: String) -> Result<String, JsValue> {
 
     ENGINE.with(|e| {
         let mut engine = e.borrow_mut();
-        let state = engine.create_game(&config);
+        let state = engine.create_game(&config)
+            .map_err(|err| JsValue::from_str(&err))?;
         serde_json::to_string(&state)
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
     })
@@ -59,7 +60,8 @@ pub fn make_move(req_json: String) -> Result<String, JsValue> {
 
     ENGINE.with(|e| {
         let mut engine = e.borrow_mut();
-        let response = engine.make_move(req);
+        let response = engine.make_move(req)
+            .map_err(|err| JsValue::from_str(&err))?;
         serde_json::to_string(&response)
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
     })
@@ -75,7 +77,8 @@ pub fn get_state(game_id_str: String) -> Result<String, JsValue> {
 
     ENGINE.with(|e| {
         let engine = e.borrow();
-        let state = engine.get_state(game_id);
+        let state = engine.get_state(game_id)
+            .map_err(|err| JsValue::from_str(&err))?;
         serde_json::to_string(&state)
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
     })

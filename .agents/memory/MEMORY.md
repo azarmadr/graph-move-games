@@ -1,2 +1,4 @@
 - [wasm-pack out-dir quirk](wasm-pack-out-dir.md) — `wasm-pack build <crate> --out-dir X` resolves X relative to the crate dir, not the cwd.
 - [Registering pre-existing artifacts on import](artifact-toml-reimport.md) — GitHub-imported repos with artifact.toml files but no workflows: any createArtifact call auto-registers other unregistered on-disk artifacts too.
+- [Rustup toolchain reset on Nix module change](rustup-toolchain-reset.md) — changing `.replit` modules (e.g., nodejs-20 → nodejs-24) can reset the installed rustup toolchain; reinstall before building WASM.
+- [WASM browser cache after model changes](wasm-browser-cache.md) — stale `public/wasm-pkg/` files can make the frontend parse an old JSON contract; verify the output directory and restart the workflow after structural WASM changes.

@@ -15,34 +15,23 @@ export interface Board {
   tiles: Cell[];
 }
 
-export type GameStatus = "Active" | "Terminated";
-
-export type NodeKind =
-  | { Source: {} }
-  | { Regular: {} }
-  | { Sink: { game_id: number; status: GameStatus } };
-
 export interface Node {
   node_id: number;
   board: Board;
-  kind: NodeKind;
 }
 
 export type Direction = "Up" | "Down" | "Left" | "Right";
 
-export interface SpawnPayload {
-  cells: Cell[];
+export interface EdgeKind {
+  Move?: { direction: Direction };
+  Spawn?: { cells: Cell[] };
 }
-
-export type EdgeType =
-  | { Move: { direction: Direction } }
-  | { Spawn: { spawn: SpawnPayload } };
 
 export interface Edge {
   edge_id: number;
   from: number;
   to: number;
-  edge_type: EdgeType;
+  kind: EdgeKind;
 }
 
 export interface GraphSnapshot {
@@ -50,24 +39,27 @@ export interface GraphSnapshot {
   edges: Edge[];
 }
 
-export interface GameCursor {
+export interface GameInstance {
   game_id: number;
-  sink_id: number;
-  status: GameStatus;
+  source_node_id: number;
+  current_node_id: number;
   score: number;
+  is_terminated: boolean;
 }
 
 export interface GameState {
   active_game_id: number;
-  cursor: GameCursor;
+  game: GameInstance;
   active_board: Board;
   graph: GraphSnapshot;
 }
 
 export interface GraphDelta {
-  nodes_added: Node[];
-  edges_added: Edge[];
   is_terminated: boolean;
+  nodes: Node[];
+  edges: Edge[];
+  current_node_id: number;
+  score_delta: number;
 }
 
 export interface MoveResponse {
@@ -78,12 +70,17 @@ export interface MoveResponse {
 export interface GameConfig {
   rows: number;
   cols: number;
+  spawn_config?: SpawnConfig;
+}
+
+export interface SpawnConfig {
+  spawns: Array<{ value: number; probability: number }>;
 }
 
 export interface ExportData {
   version: number;
   graph: GraphSnapshot;
-  games: GameCursor[];
+  games: GameInstance[];
   next_game_nonce: number;
 }
 
