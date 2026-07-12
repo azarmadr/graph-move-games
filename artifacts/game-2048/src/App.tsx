@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { loadWasm, createGameWithConfig, makeMove, getState, exportGraph, importGraph, type GameState, type Direction, type Node, type Edge, type GameConfig } from "./wasmBridge";
+import { loadWasm, createGameWithConfig, makeMove, getState, exportGraph, importGraph, type GameState, type Direction, type Node, type Edge, type GameConfig, type GameInstance } from "./wasmBridge";
 
 const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
   0:    { bg: "#cdc1b4", fg: "#cdc1b4" },
@@ -68,7 +68,7 @@ function isSpawnKind(edge: Edge): { Spawn: { cells: any[] } } | null {
   return edge.kind.Spawn ? (edge.kind as { Spawn: { cells: any[] } }) : null;
 }
 
-function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
+function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState): { nodes: Map<string, { x: number; y: number }>; edges: { edge: Edge; from: { x: number; y: number }; to: { x: number; y: number } }[] } {
   const ctx = canvas.getContext("2d")!;
   const w = canvas.width;
   const h = canvas.height;
@@ -87,7 +87,7 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
     ctx.font = "12px monospace";
     ctx.textAlign = "center";
     ctx.fillText("No graph data yet", w / 2, h / 2);
-    return;
+    return { nodes: new Map(), edges: [] };
   }
 
   type DisplayNode = { node: Node; label: string; color: string; yOffset: number };
@@ -163,14 +163,19 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
   };
 
   // Draw edges between displayed nodes
+  const drawnEdges: { edge: Edge; from: { x: number; y: number }; to: { x: number; y: number } }[] = [];
   for (const e of edges) {
     if (!positions.has(e.from) || !positions.has(e.to)) continue;
+    const from = positions.get(e.from)!;
+    const to = positions.get(e.to)!;
     const move = isMoveKind(e);
     const spawn = isSpawnKind(e);
     if (move) {
       drawEdge(e.from, e.to, move.Move.direction.toLowerCase(), "#4cc9f0");
+      drawnEdges.push({ edge: e, from, to });
     } else if (spawn) {
       drawEdge(e.from, e.to, "spawn", "#f72585");
+      drawnEdges.push({ edge: e, from, to });
     }
   }
 
@@ -238,6 +243,8 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
   ctx.font = "11px monospace";
   ctx.textAlign = "left";
   ctx.fillText(`Game ${state.active_game_id} · Node ${currentId} · Score ${state.game.score} · ${state.game.is_terminated ? "Terminated" : "Active"}`, 12, h - 12);
+
+  return { nodes: positions, edges: drawnEdges };
 }
 
 export default function App() {
@@ -245,12 +252,18 @@ export default function App() {
   const graphRef = useRef<HTMLCanvasElement>(null);
   const [state, setState] = useState<GameState | null>(null);
   const [config, setConfig] = useState<GameConfig>({ rows: 4, cols: 4 });
+  const [allGames, setAllGames] = useState<GameInstance[]>([]);
+  const [hover, setHover] = useState<{ x: number; y: number; content: React.ReactNode } | null>(null);
+  const graphLayoutRef = useRef<{ nodes: Map<string, { x: number; y: number }>; edges: { edge: Edge; from: { x: number; y: number }; to: { x: number; y: number } }[] } | null>(null);
 
 
   useEffect(() => {
     if (!state) return;
     if (boardRef.current) drawBoard(boardRef.current, state);
-    if (graphRef.current) drawFocusedGraph(graphRef.current, state);
+    if (graphRef.current) {
+      const layout = drawFocusedGraph(graphRef.current, state);
+      graphLayoutRef.current = layout;
+    }
   }, [state]);
 
   const handleMove = async (dir: Direction) => {
@@ -271,6 +284,7 @@ export default function App() {
       .then((data) => {
         const payload = JSON.stringify({ exportData: data, activeGameId: state.active_game_id });
         localStorage.setItem(STORAGE_KEY, payload);
+        setAllGames(data.games);
       })
       .catch((e) => console.error("autosave failed:", e));
   }, [state]);
@@ -282,6 +296,7 @@ export default function App() {
         try {
           const { exportData, activeGameId } = JSON.parse(saved);
           const result = await importGraph(JSON.stringify(exportData));
+          setAllGames(result.games.map((g) => g.game));
           if (result.success && result.games.length > 0) {
             const restored = await getState(activeGameId as string);
             setState(restored);
@@ -293,6 +308,7 @@ export default function App() {
       }
       const s = await createGameWithConfig(config);
       setState(s);
+      setAllGames((prev) => [...prev, s.game]);
     });
   }, []);
 
@@ -343,7 +359,94 @@ export default function App() {
     setConfig(newConfig);
     const s = await createGameWithConfig(newConfig);
     setState(s);
+    setAllGames((prev) => [...prev, s.game]);
   };
+
+  const selectGame = async (gameId: string) => {
+    const s = await getState(gameId);
+    setState(s);
+  };
+
+  const findNodeAt = (x: number, y: number): { content: React.ReactNode } | null => {
+    const layout = graphLayoutRef.current;
+    if (!layout) return null;
+    const half = 22;
+    for (const [nodeId, pos] of layout.nodes.entries()) {
+      if (Math.abs(pos.x - x) <= half && Math.abs(pos.y - y) <= half) {
+        const node = state?.graph.nodes.find((n) => n.node_id === nodeId);
+        if (!node) continue;
+        const tiles = node.board.tiles.map((c) => `${c.tile} @ ${c.pos.r},${c.pos.c}`).join("; ");
+        return {
+          content: (
+            <div>
+              <strong>Node {nodeId.slice(0, 12)}</strong>
+              <div style={{ marginTop: 4, opacity: 0.85 }}>{tiles || "empty board"}</div>
+            </div>
+          ),
+        };
+      }
+    }
+    return null;
+  };
+
+  const distToSegment = (px: number, py: number, ax: number, ay: number, bx: number, by: number) => {
+    const dx = bx - ax;
+    const dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+    const projX = ax + t * dx;
+    const projY = ay + t * dy;
+    return Math.hypot(px - projX, py - projY);
+  };
+
+  const findEdgeAt = (x: number, y: number): { content: React.ReactNode } | null => {
+    const layout = graphLayoutRef.current;
+    if (!layout) return null;
+    const threshold = 6;
+    for (const { edge, from, to } of layout.edges) {
+      if (distToSegment(x, y, from.x, from.y, to.x, to.y) < threshold) {
+        const move = isMoveKind(edge);
+        const spawn = isSpawnKind(edge);
+        if (move) {
+          return {
+            content: (
+              <div>
+                <strong>Move</strong>
+                <div style={{ marginTop: 4, opacity: 0.85 }}>{move.Move.direction}</div>
+              </div>
+            ),
+          };
+        } else if (spawn) {
+          const cells = spawn.Spawn.cells.map((c) => `${c.tile} @ ${c.pos.r},${c.pos.c}`).join("; ");
+          return {
+            content: (
+              <div>
+                <strong>Spawn</strong>
+                <div style={{ marginTop: 4, opacity: 0.85 }}>{cells}</div>
+              </div>
+            ),
+          };
+        }
+      }
+    }
+    return null;
+  };
+
+  const onGraphMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const canvas = graphRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    const hit = findNodeAt(x, y) || findEdgeAt(x, y);
+    if (hit) {
+      setHover({ x: e.clientX + 12, y: e.clientY + 12, content: hit.content });
+    } else {
+      setHover(null);
+    }
+  };
+
+  const onGraphMouseLeave = () => setHover(null);
 
   const handleExport = async () => {
     try {
@@ -361,6 +464,7 @@ export default function App() {
     try {
       const text = await navigator.clipboard.readText();
       const result = await importGraph(text);
+      setAllGames(result.games.map((g) => g.game));
       if (result.success && result.games.length > 0) {
         setState(result.games[0]);
       }
@@ -438,6 +542,17 @@ export default function App() {
           <div style={{ display: "flex", justifyContent: "space-between", width: 440, alignItems: "center" }}>
             <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>Local Graph</span>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <select
+                value={state?.active_game_id ?? ""}
+                onChange={(e) => selectGame(e.target.value)}
+                style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid #bbada0", background: "#f9f6f2", color: "#776e65", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+              >
+                {allGames.map((g) => (
+                  <option key={g.game_id} value={g.game_id}>
+                    {g.game_id.slice(0, 8)} · Score {g.score} {g.is_terminated ? "· Terminated" : ""}
+                  </option>
+                ))}
+              </select>
               <span style={{ color: "#9b8f82", fontSize: 12 }}>
                 {state ? `${state.graph.nodes.length} nodes · ${state.graph.edges.length} edges` : "loading…"}
               </span>
@@ -445,9 +560,37 @@ export default function App() {
               <button onClick={handleImport} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "#8f7a66", color: "#f9f6f2", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Import</button>
             </div>
           </div>
-          <canvas ref={graphRef} width={440} height={360} style={{ borderRadius: 8, display: "block", border: "2px solid #cdc1b4" }} />
+          <canvas
+            ref={graphRef}
+            width={440}
+            height={360}
+            style={{ borderRadius: 8, display: "block", border: "2px solid #cdc1b4", cursor: "crosshair" }}
+            onMouseMove={onGraphMouseMove}
+            onMouseLeave={onGraphMouseLeave}
+          />
         </div>
       </div>
+
+      {hover && (
+        <div
+          style={{
+            position: "fixed",
+            left: hover.x,
+            top: hover.y,
+            zIndex: 1000,
+            pointerEvents: "none",
+            background: "rgba(26, 26, 46, 0.95)",
+            color: "#f9f6f2",
+            padding: "8px 10px",
+            borderRadius: 4,
+            fontSize: 12,
+            maxWidth: 220,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
+          }}
+        >
+          {hover.content}
+        </div>
+      )}
 
       <div style={{ marginTop: 32, padding: "16px 24px", background: "#ede0c8", borderRadius: 8, maxWidth: 600, width: "100%" }}>
         <h3 style={{ color: "#776e65", margin: "0 0 8px", fontSize: 14, fontWeight: 700 }}>Model Refactor</h3>
