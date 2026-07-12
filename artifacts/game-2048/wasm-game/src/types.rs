@@ -112,7 +112,7 @@ impl Board {
 /* ── Strongly typed IDs ──────────────────────────────────────────── */
 macro_rules! strong_id {
     ($name:ident) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         pub struct $name(pub u64);
 
         impl std::fmt::Display for $name {
@@ -126,6 +126,29 @@ macro_rules! strong_id {
 strong_id!(NodeId);
 strong_id!(EdgeId);
 strong_id!(GameId);
+
+macro_rules! id_string_serde {
+    ($name:ident) => {
+        impl Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(&self.0.to_string())
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let s = String::deserialize(deserializer)?;
+                s.parse::<u64>()
+                    .map($name)
+                    .map_err(|e| serde::de::Error::custom(format!("invalid {}: {}", stringify!($name), e)))
+            }
+        }
+    };
+}
+
+id_string_serde!(NodeId);
+id_string_serde!(EdgeId);
+id_string_serde!(GameId);
 
 impl NodeId {
     /// Content-addressed ID: hash of the board content only.

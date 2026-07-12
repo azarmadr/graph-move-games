@@ -78,7 +78,7 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
 
   const { nodes, edges } = state.graph;
   const currentId = state.game.current_node_id;
-  const findNode = (id: number) => nodes.find((n) => n.node_id === id);
+  const findNode = (id: string) => nodes.find((n) => n.node_id === id);
 
   // Build a vertical chain: ancestor -> merge -> current
   const current = findNode(currentId);
@@ -97,7 +97,7 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
   displayNodes.push({ node: current, label: "current", color: "#4cc9f0", yOffset: 1 });
 
   // Merge nodes: edges pointing to current with Spawn kind
-  const mergeIds = new Set<number>();
+  const mergeIds = new Set<string>();
   for (const e of edges) {
     if (e.to === currentId && isSpawnKind(e)) {
       mergeIds.add(e.from);
@@ -110,7 +110,7 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
   }
 
   // Ancestor nodes: edges pointing to merge nodes with Move kind
-  const ancestorIds = new Set<number>();
+  const ancestorIds = new Set<string>();
   for (const mid of mergeIds) {
     for (const e of edges) {
       if (e.to === mid && isMoveKind(e)) {
@@ -124,7 +124,7 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
   }
 
   // Position nodes: y based on yOffset, x centered with spread
-  const positions = new Map<number, { x: number; y: number }>();
+  const positions = new Map<string, { x: number; y: number }>();
   const cx = w / 2;
   const cy = h / 2 + 12;
   const levelGap = 90;
@@ -139,7 +139,7 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState) {
     });
   }
 
-  const drawEdge = (fromId: number, toId: number, label: string, color: string) => {
+  const drawEdge = (fromId: string, toId: string, label: string, color: string) => {
     const a = positions.get(fromId);
     const b = positions.get(toId);
     if (!a || !b) return;

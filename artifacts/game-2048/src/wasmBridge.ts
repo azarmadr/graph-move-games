@@ -16,7 +16,7 @@ export interface Board {
 }
 
 export interface Node {
-  node_id: number;
+  node_id: string;
   board: Board;
 }
 
@@ -28,9 +28,9 @@ export interface EdgeKind {
 }
 
 export interface Edge {
-  edge_id: number;
-  from: number;
-  to: number;
+  edge_id: string;
+  from: string;
+  to: string;
   kind: EdgeKind;
 }
 
@@ -40,15 +40,15 @@ export interface GraphSnapshot {
 }
 
 export interface GameInstance {
-  game_id: number;
-  source_node_id: number;
-  current_node_id: number;
+  game_id: string;
+  source_node_id: string;
+  current_node_id: string;
   score: number;
   is_terminated: boolean;
 }
 
 export interface GameState {
-  active_game_id: number;
+  active_game_id: string;
   game: GameInstance;
   active_board: Board;
   graph: GraphSnapshot;
@@ -58,7 +58,7 @@ export interface GraphDelta {
   is_terminated: boolean;
   nodes: Node[];
   edges: Edge[];
-  current_node_id: number;
+  current_node_id: string;
   score_delta: number;
 }
 
@@ -113,16 +113,16 @@ export async function createGameWithConfig(config: GameConfig): Promise<GameStat
   return JSON.parse(json) as GameState;
 }
 
-export async function makeMove(gameId: number, direction: Direction): Promise<MoveResponse> {
+export async function makeMove(gameId: string, direction: Direction): Promise<MoveResponse> {
   const m = await loadWasm();
   const req = JSON.stringify({ game_id: gameId, direction });
   const json = m.make_move(req);
   return JSON.parse(json) as MoveResponse;
 }
 
-export async function getState(gameId: number): Promise<GameState> {
+export async function getState(gameId: string): Promise<GameState> {
   const m = await loadWasm();
-  const json = m.get_state(String(gameId));
+  const json = m.get_state(gameId);
   return JSON.parse(json) as GameState;
 }
 
