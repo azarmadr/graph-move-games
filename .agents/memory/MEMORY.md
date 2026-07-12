@@ -3,3 +3,4 @@
 - [Rustup toolchain reset on Nix module change](rustup-toolchain-reset.md) — changing `.replit` modules (e.g., nodejs-20 → nodejs-24) can reset the installed rustup toolchain; reinstall before building WASM.
 - [WASM browser cache after model changes](wasm-browser-cache.md) — stale `public/wasm-pkg/` files can make the frontend parse an old JSON contract; verify the output directory and restart the workflow after structural WASM changes.
 - [u64 IDs over the WASM bridge](u64-id-precision.md) — JavaScript `number` cannot exactly represent integers above 2^53, so large u64 IDs must be serialized as strings over the JSON bridge; parse them back to u64 in Rust.
+- [Frontend graph persistence](frontend-graph-persistence.md) — persist the full `ExportData` plus the active `game_id` to `localStorage`, restore on load via `import_graph` + `get_state`. Treat `ExportData` as the source-of-truth snapshot.
