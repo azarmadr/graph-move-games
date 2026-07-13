@@ -53,7 +53,8 @@ impl Board {
         }
     }
 
-    pub fn with_tiles(rows: u8, cols: u8, tiles: Vec<Cell>) -> Self {
+    pub fn with_tiles(rows: u8, cols: u8, mut tiles: Vec<Cell>) -> Self {
+        tiles.sort_by_key(|t| (t.pos.r, t.pos.c));
         Self { dim: (rows, cols), tiles }
     }
 

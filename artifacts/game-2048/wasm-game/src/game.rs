@@ -31,14 +31,28 @@ impl Engine {
         let cols = config.cols;
 
         let start_board = Board::with_tiles(rows, cols, vec![Cell::new(0, 0, 2)]);
-        let (start_node, _) = self.graph.get_or_create_node(start_board.clone());
+        self.create_game_with_board_inner(game_id, start_board)
+    }
+
+    /// Create a game instance with a custom board. Useful for testing edge cases
+    /// such as game-over states.
+    #[allow(dead_code)]
+    pub fn create_game_with_board(&mut self, board: Board) -> Result<GameState, String> {
+        let game_id = GameId::from_nonce(self.next_game_nonce);
+        self.next_game_nonce += 1;
+        self.create_game_with_board_inner(game_id, board)
+    }
+
+    fn create_game_with_board_inner(&mut self, game_id: GameId, board: Board) -> Result<GameState, String> {
+        let (start_node, _) = self.graph.get_or_create_node(board.clone());
+        let is_terminated = !has_any_valid_move_helper(&board);
 
         let game = GameInstance {
             game_id,
             source_node_id: start_node.node_id,
             current_node_id: start_node.node_id,
             score: 0,
-            is_terminated: false,
+            is_terminated,
         };
 
         self.games.insert(game_id, game.clone());
@@ -46,7 +60,7 @@ impl Engine {
         Ok(GameState {
             active_game_id: game_id,
             game,
-            active_board: start_board,
+            active_board: board,
             graph: self.graph.snapshot(),
         })
     }
@@ -293,5 +307,75 @@ mod tests {
         assert_eq!(imported_state.game.score, 0);
         assert_eq!(imported_state.graph.nodes.len(), 3);
         assert_eq!(imported_state.graph.edges.len(), 2);
+    }
+
+    #[test]
+    fn test_game_over_state_3x3() {
+        // Full 3x3 board with no adjacent equal tiles and no empty cells.
+        // No move can change the board, so the game must be terminated on creation.
+        let mut engine = Engine::new();
+        let board = Board::with_tiles(3, 3, vec![
+            Cell::new(0, 0, 2), Cell::new(0, 1, 4), Cell::new(0, 2, 8),
+            Cell::new(1, 0, 16), Cell::new(1, 1, 32), Cell::new(1, 2, 64),
+            Cell::new(2, 0, 128), Cell::new(2, 1, 256), Cell::new(2, 2, 512),
+        ]);
+        let state = engine.create_game_with_board(board).unwrap();
+
+        assert!(state.game.is_terminated, "game-over board should be terminated");
+        assert_eq!(state.graph.nodes.len(), 1);
+        assert_eq!(state.graph.edges.len(), 0);
+    }
+
+    #[test]
+    fn test_moves_on_game_over_board_are_invalid_3x3() {
+        // Once a game is terminated, every direction must be rejected with an empty delta.
+        let mut engine = Engine::new();
+        let board = Board::with_tiles(3, 3, vec![
+            Cell::new(0, 0, 2), Cell::new(0, 1, 4), Cell::new(0, 2, 8),
+            Cell::new(1, 0, 16), Cell::new(1, 1, 32), Cell::new(1, 2, 64),
+            Cell::new(2, 0, 128), Cell::new(2, 1, 256), Cell::new(2, 2, 512),
+        ]);
+        let state = engine.create_game_with_board(board).unwrap();
+        let game_id = state.active_game_id;
+        let initial_node_count = state.graph.nodes.len();
+        let initial_edge_count = state.graph.edges.len();
+        let initial_score = state.game.score;
+        let initial_current = state.game.current_node_id;
+
+        for dir in [Direction::Up, Direction::Down, Direction::Left, Direction::Right] {
+            let resp = engine.make_move(MoveRequest { game_id, direction: dir }).unwrap();
+            assert!(resp.delta.nodes.is_empty(), "{dir:?} created nodes on a terminated game");
+            assert!(resp.delta.edges.is_empty(), "{dir:?} created edges on a terminated game");
+            assert_eq!(resp.delta.score_delta, 0, "{dir:?} changed score on a terminated game");
+            assert_eq!(resp.game_state.graph.nodes.len(), initial_node_count);
+            assert_eq!(resp.game_state.graph.edges.len(), initial_edge_count);
+            assert_eq!(resp.game_state.game.score, initial_score);
+            assert_eq!(resp.game_state.game.current_node_id, initial_current);
+            assert!(resp.game_state.game.is_terminated);
+        }
+    }
+
+    #[test]
+    fn test_game_terminates_after_spawn_3x3() {
+        // One empty cell at (2,2). The only valid move slides into it (Right or Down),
+        // then the deterministic spawn fills the new empty cell. After the spawn the board
+        // is full with no adjacent equal tiles, so the game should be marked terminated.
+        let mut engine = Engine::new();
+        let board = Board::with_tiles(3, 3, vec![
+            Cell::new(0, 0, 2), Cell::new(0, 1, 4), Cell::new(0, 2, 8),
+            Cell::new(1, 0, 16), Cell::new(1, 1, 32), Cell::new(1, 2, 64),
+            Cell::new(2, 0, 128), Cell::new(2, 1, 256),
+        ]);
+        let state = engine.create_game_with_board(board).unwrap();
+        assert!(!state.game.is_terminated, "pre-move board should not be terminated");
+
+        let resp = engine.make_move(MoveRequest {
+            game_id: state.active_game_id,
+            direction: Direction::Right,
+        }).unwrap();
+
+        assert!(resp.game_state.game.is_terminated, "spawned board should be game-over");
+        assert!(resp.delta.nodes.len() > 0, "valid move should create nodes");
+        assert_eq!(resp.delta.edges.len(), 2, "valid move should create one move + one spawn edge");
     }
 }
