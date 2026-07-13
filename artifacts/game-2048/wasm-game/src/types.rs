@@ -1,8 +1,9 @@
-use serde::{Deserialize, Serialize};
+use {
+    crate::hash::Fnv1a,
+    serde::{Deserialize, Serialize},
+    std::collections::HashMap,
+};
 
-use crate::hash::Fnv1a;
-
-/* ── Positions and cells ───────────────────────────────────────── */
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Pos {
     pub r: u8,
@@ -30,7 +31,6 @@ impl Cell {
     }
 }
 
-/* ── Board (sparse: empties absent) ───────────────────────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Board {
     pub dim: (u8, u8), // (rows, cols) — e.g. (3,3) or (4,4)
@@ -55,11 +55,17 @@ impl Board {
 
     pub fn with_tiles(rows: u8, cols: u8, mut tiles: Vec<Cell>) -> Self {
         tiles.sort_by_key(|t| (t.pos.r, t.pos.c));
-        Self { dim: (rows, cols), tiles }
+        Self {
+            dim: (rows, cols),
+            tiles,
+        }
     }
 
     pub fn tile_at(&self, r: u8, c: u8) -> Option<u32> {
-        self.tiles.iter().find(|t| t.pos.r == r && t.pos.c == c).map(|t| t.tile)
+        self.tiles
+            .iter()
+            .find(|t| t.pos.r == r && t.pos.c == c)
+            .map(|t| t.tile)
     }
 
     /// Positions of empty cells.
@@ -91,7 +97,12 @@ impl Board {
     }
 
     pub fn remove(&self, r: u8, c: u8) -> Self {
-        let tiles: Vec<Cell> = self.tiles.iter().filter(|t| !(t.pos.r == r && t.pos.c == c)).cloned().collect();
+        let tiles: Vec<Cell> = self
+            .tiles
+            .iter()
+            .filter(|t| !(t.pos.r == r && t.pos.c == c))
+            .cloned()
+            .collect();
         Self {
             dim: self.dim,
             tiles,
@@ -139,9 +150,9 @@ macro_rules! id_string_serde {
         impl<'de> Deserialize<'de> for $name {
             fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
                 let s = String::deserialize(deserializer)?;
-                s.parse::<u64>()
-                    .map($name)
-                    .map_err(|e| serde::de::Error::custom(format!("invalid {}: {}", stringify!($name), e)))
+                s.parse::<u64>().map($name).map_err(|e| {
+                    serde::de::Error::custom(format!("invalid {}: {}", stringify!($name), e))
+                })
             }
         }
     };
@@ -198,25 +209,17 @@ impl GameId {
     }
 }
 
-/* ── Nodes (board states are deduplicated by NodeId) ─────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Node {
-    pub node_id: NodeId,
     pub board: Board,
 }
 
-/* ── Edges ──────────────────────────────────────────────────────── */
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Direction {
     Up,
     Down,
     Left,
     Right,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SpawnPayload {
-    pub cells: Vec<Cell>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,7 +236,6 @@ pub struct Edge {
     pub kind: EdgeKind,
 }
 
-/* ── Graph delta (what changed in one extend_path call) ─────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphDelta {
     pub is_terminated: bool,
@@ -255,7 +257,6 @@ impl GraphDelta {
     }
 }
 
-/* ── Game instance (matches model.md) ──────────────────────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameInstance {
     pub game_id: GameId,
@@ -263,9 +264,9 @@ pub struct GameInstance {
     pub current_node_id: NodeId,
     pub score: u64,
     pub is_terminated: bool,
+    pub config: GameConfig,
 }
 
-/* ── Full state returned to JS ───────────────────────────────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameState {
     pub active_game_id: GameId,
@@ -280,7 +281,6 @@ pub struct GraphSnapshot {
     pub edges: Vec<Edge>,
 }
 
-/* ── Move request from JS ───────────────────────────────────────── */
 #[derive(Debug, Clone, Copy, Deserialize)]
 pub struct MoveRequest {
     pub game_id: GameId,
@@ -293,35 +293,24 @@ pub struct MoveResponse {
     pub delta: GraphDelta,
 }
 
-/* ── Spawn configuration ─────────────────────────────────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpawnConfig {
-    pub spawns: Vec<SpawnOption>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpawnOption {
-    pub value: u32,
-    pub probability: u64, // fixed-point: probability / 1_000_000
+    pub spawns: HashMap<u32, u32>,
 }
 
 impl Default for SpawnConfig {
     fn default() -> Self {
         Self {
-            spawns: vec![SpawnOption {
-                value: 2,
-                probability: 1_000_000, // 100%
-            }],
+            spawns: HashMap::from([(2, 1)]),
         }
     }
 }
 
-/* ── Game config from JS ─────────────────────────────────────────── */
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GameConfig {
     pub rows: u8,
     pub cols: u8,
-    pub spawn_config: Option<SpawnConfig>,
+    pub spawn_config: SpawnConfig,
 }
 
 impl Default for GameConfig {
@@ -329,12 +318,11 @@ impl Default for GameConfig {
         Self {
             rows: 4,
             cols: 4,
-            spawn_config: None,
+            spawn_config: SpawnConfig::default(),
         }
     }
 }
 
-/* ── Export / Import format ───────────────────────────────────────── */
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExportData {
     pub version: u32,

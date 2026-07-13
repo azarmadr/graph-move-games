@@ -70,11 +70,11 @@ export interface MoveResponse {
 export interface GameConfig {
   rows: number;
   cols: number;
-  spawn_config?: SpawnConfig;
+  spawn_config: SpawnConfig;
 }
 
 export interface SpawnConfig {
-  spawns: Array<{ value: number; probability: number }>;
+  spawns: { [key: number]: number }; // mapping from tile value to spawn probability
 }
 
 export interface ExportData {
@@ -107,13 +107,18 @@ export async function createGame(): Promise<GameState> {
   return JSON.parse(json) as GameState;
 }
 
-export async function createGameWithConfig(config: GameConfig): Promise<GameState> {
+export async function createGameWithConfig(
+  config: GameConfig,
+): Promise<GameState> {
   const m = await loadWasm();
   const json = m.create_game_with_config(JSON.stringify(config));
   return JSON.parse(json) as GameState;
 }
 
-export async function makeMove(gameId: string, direction: Direction): Promise<MoveResponse> {
+export async function makeMove(
+  gameId: string,
+  direction: Direction,
+): Promise<MoveResponse> {
   const m = await loadWasm();
   const req = JSON.stringify({ game_id: gameId, direction });
   const json = m.make_move(req);

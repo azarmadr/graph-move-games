@@ -1,4 +1,4 @@
-use crate::types::{Board, Cell, SpawnConfig, SpawnOption};
+use crate::types::{Board, Cell, SpawnConfig};
 
 /// Sample a deterministic spawn outcome for the given board.
 ///
@@ -13,41 +13,26 @@ pub fn sample_spawn(board: &Board, config: &SpawnConfig) -> Vec<Cell> {
         return Vec::new();
     }
 
-    let option = config
-        .spawns
-        .first()
-        .cloned()
-        .unwrap_or(SpawnOption {
-            value: 2,
-            probability: 1_000_000,
-        });
+    let option = config.spawns.iter().next().unwrap().0;
 
     // Deterministic: always pick the first empty cell.
     let pos = empties[0];
-    vec![Cell::new(pos.r, pos.c, option.value)]
+    vec![Cell::new(pos.r, pos.c, *option)]
 }
 
 /// List all possible spawn outcomes for a board. Useful for enumeration and
 /// future probabilistic branching. Each outcome is a single tile placed on an
 /// empty cell, using the first configured spawn value.
-#[allow(dead_code)]
 pub fn all_spawn_outcomes(board: &Board, config: &SpawnConfig) -> Vec<Vec<Cell>> {
     let empties = board.empty_positions();
     if empties.is_empty() {
         return vec![Vec::new()];
     }
 
-    let option = config
-        .spawns
-        .first()
-        .cloned()
-        .unwrap_or(SpawnOption {
-            value: 2,
-            probability: 1_000_000,
-        });
+    let option = config.spawns.iter().next().unwrap().0;
 
     empties
         .into_iter()
-        .map(|pos| vec![Cell::new(pos.r, pos.c, option.value)])
+        .map(|pos| vec![Cell::new(pos.r, pos.c, *option)])
         .collect()
 }

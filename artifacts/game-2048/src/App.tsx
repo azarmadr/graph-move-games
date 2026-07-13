@@ -1,17 +1,31 @@
 import { useEffect, useRef, useState } from "react";
-import { loadWasm, createGameWithConfig, makeMove, getState, exportGraph, importGraph, type GameState, type Direction, type Node, type Edge, type GameConfig, type GameInstance, type GraphDelta } from "./wasmBridge";
+import {
+  loadWasm,
+  createGameWithConfig,
+  makeMove,
+  getState,
+  exportGraph,
+  importGraph,
+  type GameState,
+  type Direction,
+  type Node,
+  type Edge,
+  type GameConfig,
+  type GameInstance,
+  type GraphDelta,
+} from "./wasmBridge";
 
 const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
-  0:    { bg: "#cdc1b4", fg: "#cdc1b4" },
-  2:    { bg: "#eee4da", fg: "#776e65" },
-  4:    { bg: "#ede0c8", fg: "#776e65" },
-  8:    { bg: "#f2b179", fg: "#f9f6f2" },
-  16:   { bg: "#f59563", fg: "#f9f6f2" },
-  32:   { bg: "#f67c5f", fg: "#f9f6f2" },
-  64:   { bg: "#f65e3b", fg: "#f9f6f2" },
-  128:  { bg: "#edcf72", fg: "#f9f6f2" },
-  256:  { bg: "#edcc61", fg: "#f9f6f2" },
-  512:  { bg: "#edc850", fg: "#f9f6f2" },
+  0: { bg: "#cdc1b4", fg: "#cdc1b4" },
+  2: { bg: "#eee4da", fg: "#776e65" },
+  4: { bg: "#ede0c8", fg: "#776e65" },
+  8: { bg: "#f2b179", fg: "#f9f6f2" },
+  16: { bg: "#f59563", fg: "#f9f6f2" },
+  32: { bg: "#f67c5f", fg: "#f9f6f2" },
+  64: { bg: "#f65e3b", fg: "#f9f6f2" },
+  128: { bg: "#edcf72", fg: "#f9f6f2" },
+  256: { bg: "#edcc61", fg: "#f9f6f2" },
+  512: { bg: "#edc850", fg: "#f9f6f2" },
   1024: { bg: "#edc53f", fg: "#f9f6f2" },
   2048: { bg: "#edc22e", fg: "#f9f6f2" },
 };
@@ -22,7 +36,9 @@ function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
   const padding = 12;
   const gap = 8;
   const [rows, cols] = state.active_board.dim;
-  const cellSize = (size - padding * 2 - gap * (Math.max(rows, cols) - 1)) / Math.max(rows, cols);
+  const cellSize =
+    (size - padding * 2 - gap * (Math.max(rows, cols) - 1)) /
+    Math.max(rows, cols);
   const boardW = padding * 2 + cols * cellSize + (cols - 1) * gap;
   const boardH = padding * 2 + rows * cellSize + (rows - 1) * gap;
 
@@ -31,7 +47,9 @@ function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
   ctx.roundRect(0, 0, boardW, boardH, 8);
   ctx.fill();
 
-  const grid: number[][] = Array.from({ length: rows }, () => Array(cols).fill(0));
+  const grid: number[][] = Array.from({ length: rows }, () =>
+    Array(cols).fill(0),
+  );
   for (const cell of state.active_board.tiles) {
     grid[cell.pos.r][cell.pos.c] = cell.tile;
   }
@@ -61,14 +79,26 @@ function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
 }
 
 function isMoveKind(edge: Edge): { Move: { direction: Direction } } | null {
-  return edge.kind.Move ? (edge.kind as { Move: { direction: Direction } }) : null;
+  return edge.kind.Move
+    ? (edge.kind as { Move: { direction: Direction } })
+    : null;
 }
 
 function isSpawnKind(edge: Edge): { Spawn: { cells: any[] } } | null {
   return edge.kind.Spawn ? (edge.kind as { Spawn: { cells: any[] } }) : null;
 }
 
-function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState): { nodes: Map<string, { x: number; y: number }>; edges: { edge: Edge; from: { x: number; y: number }; to: { x: number; y: number } }[] } {
+function drawFocusedGraph(
+  canvas: HTMLCanvasElement,
+  state: GameState,
+): {
+  nodes: Map<string, { x: number; y: number }>;
+  edges: {
+    edge: Edge;
+    from: { x: number; y: number };
+    to: { x: number; y: number };
+  }[];
+} {
   const ctx = canvas.getContext("2d")!;
   const w = canvas.width;
   const h = canvas.height;
@@ -90,11 +120,21 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState): { nodes:
     return { nodes: new Map(), edges: [] };
   }
 
-  type DisplayNode = { node: Node; label: string; color: string; yOffset: number };
+  type DisplayNode = {
+    node: Node;
+    label: string;
+    color: string;
+    yOffset: number;
+  };
   const displayNodes: DisplayNode[] = [];
 
   // Current node
-  displayNodes.push({ node: current, label: "current", color: "#4cc9f0", yOffset: 1 });
+  displayNodes.push({
+    node: current,
+    label: "current",
+    color: "#4cc9f0",
+    yOffset: 1,
+  });
 
   // Merge nodes: edges pointing to current with Spawn kind
   const mergeIds = new Set<string>();
@@ -106,7 +146,13 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState): { nodes:
 
   for (const mid of mergeIds) {
     const n = findNode(mid);
-    if (n) displayNodes.push({ node: n, label: "merge", color: "#f72585", yOffset: 0 });
+    if (n)
+      displayNodes.push({
+        node: n,
+        label: "merge",
+        color: "#f72585",
+        yOffset: 0,
+      });
   }
 
   // Ancestor nodes: edges pointing to merge nodes with Move kind
@@ -120,7 +166,13 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState): { nodes:
   }
   for (const aid of ancestorIds) {
     const n = findNode(aid);
-    if (n) displayNodes.push({ node: n, label: "before", color: "#a3a3a3", yOffset: -1 });
+    if (n)
+      displayNodes.push({
+        node: n,
+        label: "before",
+        color: "#a3a3a3",
+        yOffset: -1,
+      });
   }
 
   // Position nodes: y based on yOffset, x centered with spread
@@ -129,17 +181,26 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState): { nodes:
   const cy = h / 2 + 12;
   const levelGap = 90;
 
-  const byLevel = (offset: number) => displayNodes.filter((d) => d.yOffset === offset);
+  const byLevel = (offset: number) =>
+    displayNodes.filter((d) => d.yOffset === offset);
   for (const offset of [-1, 0, 1]) {
     const levelNodes = byLevel(offset);
     if (levelNodes.length === 0) continue;
     const startX = cx - (levelNodes.length - 1) * 50;
     levelNodes.forEach((d, i) => {
-      positions.set(d.node.node_id, { x: startX + i * 100, y: cy + offset * levelGap });
+      positions.set(d.node.node_id, {
+        x: startX + i * 100,
+        y: cy + offset * levelGap,
+      });
     });
   }
 
-  const drawEdge = (fromId: string, toId: string, label: string, color: string) => {
+  const drawEdge = (
+    fromId: string,
+    toId: string,
+    label: string,
+    color: string,
+  ) => {
     const a = positions.get(fromId);
     const b = positions.get(toId);
     if (!a || !b) return;
@@ -163,7 +224,11 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState): { nodes:
   };
 
   // Draw edges between displayed nodes
-  const drawnEdges: { edge: Edge; from: { x: number; y: number }; to: { x: number; y: number } }[] = [];
+  const drawnEdges: {
+    edge: Edge;
+    from: { x: number; y: number };
+    to: { x: number; y: number };
+  }[] = [];
   for (const e of edges) {
     if (!positions.has(e.from) || !positions.has(e.to)) continue;
     const from = positions.get(e.from)!;
@@ -189,7 +254,9 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState): { nodes:
     const isCur = d.label === "current";
 
     const [mRows, mCols] = d.node.board.dim;
-    const grid: number[][] = Array.from({ length: mRows }, () => Array(mCols).fill(0));
+    const grid: number[][] = Array.from({ length: mRows }, () =>
+      Array(mCols).fill(0),
+    );
     for (const cell of d.node.board.tiles) {
       grid[cell.pos.r][cell.pos.c] = cell.tile;
     }
@@ -242,7 +309,11 @@ function drawFocusedGraph(canvas: HTMLCanvasElement, state: GameState): { nodes:
   ctx.fillStyle = "rgba(255,255,255,0.35)";
   ctx.font = "11px monospace";
   ctx.textAlign = "left";
-  ctx.fillText(`Game ${state.active_game_id} · Node ${currentId} · Score ${state.game.score} · ${state.game.is_terminated ? "Terminated" : "Active"}`, 12, h - 12);
+  ctx.fillText(
+    `Game ${state.active_game_id} · Node ${currentId} · Score ${state.game.score} · ${state.game.is_terminated ? "Terminated" : "Active"}`,
+    12,
+    h - 12,
+  );
 
   return { nodes: positions, edges: drawnEdges };
 }
@@ -251,12 +322,26 @@ export default function App() {
   const boardRef = useRef<HTMLCanvasElement>(null);
   const graphRef = useRef<HTMLCanvasElement>(null);
   const [state, setState] = useState<GameState | null>(null);
-  const [config, setConfig] = useState<GameConfig>({ rows: 4, cols: 4 });
+  const [config, setConfig] = useState<GameConfig>({
+    rows: 4,
+    cols: 4,
+    spawn_config: { spawns: { [2]: 9, [4]: 1 } },
+  });
   const [allGames, setAllGames] = useState<GameInstance[]>([]);
-  const [hover, setHover] = useState<{ x: number; y: number; content: React.ReactNode } | null>(null);
+  const [hover, setHover] = useState<{
+    x: number;
+    y: number;
+    content: React.ReactNode;
+  } | null>(null);
   const [lastMove, setLastMove] = useState<GraphDelta | null>(null);
-  const graphLayoutRef = useRef<{ nodes: Map<string, { x: number; y: number }>; edges: { edge: Edge; from: { x: number; y: number }; to: { x: number; y: number } }[] } | null>(null);
-
+  const graphLayoutRef = useRef<{
+    nodes: Map<string, { x: number; y: number }>;
+    edges: {
+      edge: Edge;
+      from: { x: number; y: number };
+      to: { x: number; y: number };
+    }[];
+  } | null>(null);
 
   useEffect(() => {
     if (!state) return;
@@ -284,7 +369,10 @@ export default function App() {
     if (!state) return;
     exportGraph()
       .then((data) => {
-        const payload = JSON.stringify({ exportData: data, activeGameId: state.active_game_id });
+        const payload = JSON.stringify({
+          exportData: data,
+          activeGameId: state.active_game_id,
+        });
         localStorage.setItem(STORAGE_KEY, payload);
         setAllGames(data.games);
       })
@@ -319,9 +407,18 @@ export default function App() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const map: Record<string, Direction> = {
-        ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right",
-        w: "Up", s: "Down", a: "Left", d: "Right",
-        W: "Up", S: "Down", A: "Left", D: "Right",
+        ArrowUp: "Up",
+        ArrowDown: "Down",
+        ArrowLeft: "Left",
+        ArrowRight: "Right",
+        w: "Up",
+        s: "Down",
+        a: "Left",
+        d: "Right",
+        W: "Up",
+        S: "Down",
+        A: "Left",
+        D: "Right",
       };
       if (map[e.key]) {
         e.preventDefault();
@@ -359,7 +456,11 @@ export default function App() {
   };
 
   const startNewGame = async (rows: number, cols: number) => {
-    const newConfig = { rows, cols };
+    const newConfig = {
+      rows,
+      cols,
+      spawn_config: { spawns: { [2]: 9, [4]: 1 } },
+    };
     setConfig(newConfig);
     const s = await createGameWithConfig(newConfig);
     setLastMove(null);
@@ -373,7 +474,10 @@ export default function App() {
     setState(s);
   };
 
-  const findNodeAt = (x: number, y: number): { content: React.ReactNode } | null => {
+  const findNodeAt = (
+    x: number,
+    y: number,
+  ): { content: React.ReactNode } | null => {
     const layout = graphLayoutRef.current;
     if (!layout) return null;
     const half = 22;
@@ -381,12 +485,16 @@ export default function App() {
       if (Math.abs(pos.x - x) <= half && Math.abs(pos.y - y) <= half) {
         const node = state?.graph.nodes.find((n) => n.node_id === nodeId);
         if (!node) continue;
-        const tiles = node.board.tiles.map((c) => `${c.tile} @ ${c.pos.r},${c.pos.c}`).join("; ");
+        const tiles = node.board.tiles
+          .map((c) => `${c.tile} @ ${c.pos.r},${c.pos.c}`)
+          .join("; ");
         return {
           content: (
             <div>
               <strong>Node {nodeId.slice(0, 12)}</strong>
-              <div style={{ marginTop: 4, opacity: 0.85 }}>{tiles || "empty board"}</div>
+              <div style={{ marginTop: 4, opacity: 0.85 }}>
+                {tiles || "empty board"}
+              </div>
             </div>
           ),
         };
@@ -395,17 +503,30 @@ export default function App() {
     return null;
   };
 
-  const distToSegment = (px: number, py: number, ax: number, ay: number, bx: number, by: number) => {
+  const distToSegment = (
+    px: number,
+    py: number,
+    ax: number,
+    ay: number,
+    bx: number,
+    by: number,
+  ) => {
     const dx = bx - ax;
     const dy = by - ay;
     const len2 = dx * dx + dy * dy;
-    const t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
+    const t =
+      len2 === 0
+        ? 0
+        : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
     const projX = ax + t * dx;
     const projY = ay + t * dy;
     return Math.hypot(px - projX, py - projY);
   };
 
-  const findEdgeAt = (x: number, y: number): { content: React.ReactNode } | null => {
+  const findEdgeAt = (
+    x: number,
+    y: number,
+  ): { content: React.ReactNode } | null => {
     const layout = graphLayoutRef.current;
     if (!layout) return null;
     const threshold = 6;
@@ -418,12 +539,16 @@ export default function App() {
             content: (
               <div>
                 <strong>Move</strong>
-                <div style={{ marginTop: 4, opacity: 0.85 }}>{move.Move.direction}</div>
+                <div style={{ marginTop: 4, opacity: 0.85 }}>
+                  {move.Move.direction}
+                </div>
               </div>
             ),
           };
         } else if (spawn) {
-          const cells = spawn.Spawn.cells.map((c) => `${c.tile} @ ${c.pos.r},${c.pos.c}`).join("; ");
+          const cells = spawn.Spawn.cells
+            .map((c) => `${c.tile} @ ${c.pos.r},${c.pos.c}`)
+            .join("; ");
           return {
             content: (
               <div>
@@ -485,15 +610,47 @@ export default function App() {
   const isGameOver = state?.game.is_terminated ?? false;
 
   return (
-    <div style={{ minHeight: "100vh", background: "#faf8ef", display: "flex", flexDirection: "column", alignItems: "center", padding: "32px 16px", fontFamily: "'Clear Sans', Arial, sans-serif" }}>
-      <h1 style={{ color: "#776e65", fontSize: 36, fontWeight: 800, margin: "0 0 4px" }}>2048</h1>
+    <div
+      style={{
+        minHeight: "100vh",
+        background: "#faf8ef",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        padding: "32px 16px",
+        fontFamily: "'Clear Sans', Arial, sans-serif",
+      }}
+    >
+      <h1
+        style={{
+          color: "#776e65",
+          fontSize: 36,
+          fontWeight: 800,
+          margin: "0 0 4px",
+        }}
+      >
+        2048
+      </h1>
       <p style={{ color: "#9b8f82", fontSize: 14, margin: "0 0 24px" }}>
         Rust/WASM · Model-driven DAG · Phase 2
       </p>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 16, alignItems: "center" }}>
-        <span style={{ color: "#776e65", fontSize: 13, fontWeight: 600 }}>Board size:</span>
-        {[[3,3], [4,4], [5,5]].map(([r, c]) => (
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          marginBottom: 16,
+          alignItems: "center",
+        }}
+      >
+        <span style={{ color: "#776e65", fontSize: 13, fontWeight: 600 }}>
+          Board size:
+        </span>
+        {[
+          [3, 3],
+          [4, 4],
+          [5, 5],
+        ].map(([r, c]) => (
           <button
             key={`${r}x${c}`}
             onClick={() => startNewGame(r, c)}
@@ -501,7 +658,8 @@ export default function App() {
               padding: "4px 10px",
               borderRadius: 4,
               border: "none",
-              background: config.rows === r && config.cols === c ? "#8f7a66" : "#bbada0",
+              background:
+                config.rows === r && config.cols === c ? "#8f7a66" : "#bbada0",
               color: "#f9f6f2",
               fontSize: 12,
               fontWeight: 700,
@@ -513,11 +671,44 @@ export default function App() {
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: 32, flexWrap: "wrap", justifyContent: "center", position: "relative" }}>
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", width: 360, alignItems: "center" }}>
-            <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>Board</span>
-            <span style={{ background: "#bbada0", color: "#f9f6f2", fontWeight: 700, padding: "4px 14px", borderRadius: 4, fontSize: 14 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 32,
+          flexWrap: "wrap",
+          justifyContent: "center",
+          position: "relative",
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              width: 360,
+              alignItems: "center",
+            }}
+          >
+            <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>
+              Board
+            </span>
+            <span
+              style={{
+                background: "#bbada0",
+                color: "#f9f6f2",
+                fontWeight: 700,
+                padding: "4px 14px",
+                borderRadius: 4,
+                fontSize: 14,
+              }}
+            >
               SCORE: {state?.game.score ?? 0}
             </span>
           </div>
@@ -532,29 +723,39 @@ export default function App() {
               onTouchEnd={onTouchEnd}
             />
             {isGameOver && (
-              <div style={{
-                position: "absolute",
-                top: 0,
-                left: 0,
-                width: "100%",
-                height: "100%",
-                borderRadius: 8,
-                background: "rgba(0, 0, 0, 0.6)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                zIndex: 10,
-              }}>
-                <div style={{
-                  background: "#f65e3b",
-                  color: "#f9f6f2",
-                  padding: "24px",
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  left: 0,
+                  width: "100%",
+                  height: "100%",
                   borderRadius: 8,
-                  textAlign: "center",
-                  boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
-                }}>
-                  <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>Game Over!</div>
-                  <div style={{ fontSize: 14, opacity: 0.9, marginBottom: 12 }}>No more valid moves</div>
+                  background: "rgba(0, 0, 0, 0.6)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  zIndex: 10,
+                }}
+              >
+                <div
+                  style={{
+                    background: "#f65e3b",
+                    color: "#f9f6f2",
+                    padding: "24px",
+                    borderRadius: 8,
+                    textAlign: "center",
+                    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                  }}
+                >
+                  <div
+                    style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}
+                  >
+                    Game Over!
+                  </div>
+                  <div style={{ fontSize: 14, opacity: 0.9, marginBottom: 12 }}>
+                    No more valid moves
+                  </div>
                   <button
                     onClick={() => startNewGame(config.rows, config.cols)}
                     style={{
@@ -574,23 +775,55 @@ export default function App() {
               </div>
             )}
           </div>
-          <div className="arrow-buttons" style={{ display: "flex", gap: 8, marginTop: 8 }}>
-            {["↑","↓","←","→"].map((dir) => (
+          <div
+            className="arrow-buttons"
+            style={{ display: "flex", gap: 8, marginTop: 8 }}
+          >
+            {["↑", "↓", "←", "→"].map((dir) => (
               <button
                 key={dir}
                 disabled={isGameOver}
                 onClick={() => {
-                  const dmap: Record<string, Direction> = { "↑": "Up", "↓": "Down", "←": "Left", "→": "Right" };
+                  const dmap: Record<string, Direction> = {
+                    "↑": "Up",
+                    "↓": "Down",
+                    "←": "Left",
+                    "→": "Right",
+                  };
                   handleMove(dmap[dir]);
                 }}
-                style={{ width: 44, height: 44, borderRadius: 6, border: "none", background: "#bbada0", color: "#f9f6f2", fontSize: 18, fontWeight: 700, cursor: isGameOver ? "not-allowed" : "pointer", opacity: isGameOver ? 0.5 : 1 }}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 6,
+                  border: "none",
+                  background: "#bbada0",
+                  color: "#f9f6f2",
+                  fontSize: 18,
+                  fontWeight: 700,
+                  cursor: isGameOver ? "not-allowed" : "pointer",
+                  opacity: isGameOver ? 0.5 : 1,
+                }}
               >
                 {dir}
               </button>
             ))}
           </div>
           {lastMove && (
-            <div style={{ marginTop: 8, padding: "4px 10px", borderRadius: 4, background: lastMove.nodes.length === 0 && lastMove.edges.length === 0 ? "#f65e3b" : "#8f7a66", color: "#f9f6f2", fontSize: 12, fontWeight: 600 }}>
+            <div
+              style={{
+                marginTop: 8,
+                padding: "4px 10px",
+                borderRadius: 4,
+                background:
+                  lastMove.nodes.length === 0 && lastMove.edges.length === 0
+                    ? "#f65e3b"
+                    : "#8f7a66",
+                color: "#f9f6f2",
+                fontSize: 12,
+                fontWeight: 600,
+              }}
+            >
               {lastMove.nodes.length === 0 && lastMove.edges.length === 0
                 ? "Invalid move — no graph change"
                 : `Valid move · +${lastMove.nodes.length} nodes · +${lastMove.edges.length} edges · +${lastMove.score_delta} score`}
@@ -598,33 +831,94 @@ export default function App() {
           )}
         </div>
 
-        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", width: 440, alignItems: "center" }}>
-            <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>Local Graph</span>
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            gap: 8,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              width: 440,
+              alignItems: "center",
+            }}
+          >
+            <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>
+              Local Graph
+            </span>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <select
                 value={state?.active_game_id ?? ""}
                 onChange={(e) => selectGame(e.target.value)}
-                style={{ padding: "3px 8px", borderRadius: 4, border: "1px solid #bbada0", background: "#f9f6f2", color: "#776e65", fontSize: 11, fontWeight: 700, cursor: "pointer" }}
+                style={{
+                  padding: "3px 8px",
+                  borderRadius: 4,
+                  border: "1px solid #bbada0",
+                  background: "#f9f6f2",
+                  color: "#776e65",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
               >
                 {allGames.map((g) => (
                   <option key={g.game_id} value={g.game_id}>
-                    {g.game_id.slice(0, 8)} · Score {g.score} {g.is_terminated ? "· Terminated" : ""}
+                    {g.game_id.slice(0, 8)} · Score {g.score}{" "}
+                    {g.is_terminated ? "· Terminated" : ""}
                   </option>
                 ))}
               </select>
               <span style={{ color: "#9b8f82", fontSize: 12 }}>
-                {state ? `${state.graph.nodes.length} nodes · ${state.graph.edges.length} edges` : "loading…"}
+                {state
+                  ? `${state.graph.nodes.length} nodes · ${state.graph.edges.length} edges`
+                  : "loading…"}
               </span>
-              <button onClick={handleExport} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "#8f7a66", color: "#f9f6f2", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Export</button>
-              <button onClick={handleImport} style={{ padding: "3px 8px", borderRadius: 4, border: "none", background: "#8f7a66", color: "#f9f6f2", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Import</button>
+              <button
+                onClick={handleExport}
+                style={{
+                  padding: "3px 8px",
+                  borderRadius: 4,
+                  border: "none",
+                  background: "#8f7a66",
+                  color: "#f9f6f2",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Export
+              </button>
+              <button
+                onClick={handleImport}
+                style={{
+                  padding: "3px 8px",
+                  borderRadius: 4,
+                  border: "none",
+                  background: "#8f7a66",
+                  color: "#f9f6f2",
+                  fontSize: 11,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
+              >
+                Import
+              </button>
             </div>
           </div>
           <canvas
             ref={graphRef}
             width={440}
             height={360}
-            style={{ borderRadius: 8, display: "block", border: "2px solid #cdc1b4", cursor: "crosshair" }}
+            style={{
+              borderRadius: 8,
+              display: "block",
+              border: "2px solid #cdc1b4",
+              cursor: "crosshair",
+            }}
             onMouseMove={onGraphMouseMove}
             onMouseLeave={onGraphMouseLeave}
           />
@@ -652,15 +946,49 @@ export default function App() {
         </div>
       )}
 
-      <div style={{ marginTop: 32, padding: "16px 24px", background: "#ede0c8", borderRadius: 8, maxWidth: 600, width: "100%" }}>
-        <h3 style={{ color: "#776e65", margin: "0 0 8px", fontSize: 14, fontWeight: 700 }}>Game Over Fix</h3>
-        <ul style={{ color: "#776e65", fontSize: 13, margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
-          <li>✅ Fixed: Game over check now uses <code>state.game.is_terminated</code></li>
+      <div
+        style={{
+          marginTop: 32,
+          padding: "16px 24px",
+          background: "#ede0c8",
+          borderRadius: 8,
+          maxWidth: 600,
+          width: "100%",
+        }}
+      >
+        <h3
+          style={{
+            color: "#776e65",
+            margin: "0 0 8px",
+            fontSize: 14,
+            fontWeight: 700,
+          }}
+        >
+          Game Over Fix
+        </h3>
+        <ul
+          style={{
+            color: "#776e65",
+            fontSize: 13,
+            margin: 0,
+            paddingLeft: 18,
+            lineHeight: 1.8,
+          }}
+        >
+          <li>
+            ✅ Fixed: Game over check now uses{" "}
+            <code>state.game.is_terminated</code>
+          </li>
           <li>✅ Buttons properly disabled when game is terminated</li>
           <li>✅ Game over modal overlay with "New Game" button</li>
           <li>✅ Keyboard/touch input blocked when game is over</li>
-          <li>Nodes: Pure board states (no <code>NodeKind</code>)</li>
-          <li>Edges: Atomic transitions with <code>kind</code>: <code>Move</code> or <code>Spawn</code></li>
+          <li>
+            Nodes: Pure board states (no <code>NodeKind</code>)
+          </li>
+          <li>
+            Edges: Atomic transitions with <code>kind</code>: <code>Move</code>{" "}
+            or <code>Spawn</code>
+          </li>
         </ul>
       </div>
     </div>

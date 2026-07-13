@@ -7,10 +7,7 @@ mod move_logic;
 mod spawn;
 mod types;
 
-use game::Engine;
-use types::*;
-
-use std::cell::RefCell;
+use {game::Engine, std::cell::RefCell, types::*};
 
 thread_local! {
     static ENGINE: RefCell<Engine> = RefCell::new(Engine::new());
@@ -32,7 +29,9 @@ pub fn init() {
 /// Create a new game instance with default 4x4 board. Returns full state as JSON string.
 #[wasm_bindgen]
 pub fn create_game() -> Result<String, JsValue> {
-    create_game_with_config("{\"rows\":4,\"cols\":4}".to_string())
+    create_game_with_config(
+        r#"{"rows":4,"cols":4, "spawn_config": { spawns: {[2]: 1} }}"#.to_string(),
+    )
 }
 
 /// Create a new game instance with custom dimensions.
@@ -44,7 +43,8 @@ pub fn create_game_with_config(config_json: String) -> Result<String, JsValue> {
 
     ENGINE.with(|e| {
         let mut engine = e.borrow_mut();
-        let state = engine.create_game(&config)
+        let state = engine
+            .create_game(&config)
             .map_err(|err| JsValue::from_str(&err))?;
         serde_json::to_string(&state)
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
@@ -60,7 +60,8 @@ pub fn make_move(req_json: String) -> Result<String, JsValue> {
 
     ENGINE.with(|e| {
         let mut engine = e.borrow_mut();
-        let response = engine.make_move(req)
+        let response = engine
+            .make_move(req)
             .map_err(|err| JsValue::from_str(&err))?;
         serde_json::to_string(&response)
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
@@ -77,7 +78,8 @@ pub fn get_state(game_id_str: String) -> Result<String, JsValue> {
 
     ENGINE.with(|e| {
         let engine = e.borrow();
-        let state = engine.get_state(game_id)
+        let state = engine
+            .get_state(game_id)
             .map_err(|err| JsValue::from_str(&err))?;
         serde_json::to_string(&state)
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
