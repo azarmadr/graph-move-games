@@ -482,6 +482,8 @@ export default function App() {
     }
   };
 
+  const isGameOver = state?.game.is_terminated ?? false;
+
   return (
     <div style={{ minHeight: "100vh", background: "#faf8ef", display: "flex", flexDirection: "column", alignItems: "center", padding: "32px 16px", fontFamily: "'Clear Sans', Arial, sans-serif" }}>
       <h1 style={{ color: "#776e65", fontSize: 36, fontWeight: 800, margin: "0 0 4px" }}>2048</h1>
@@ -511,7 +513,7 @@ export default function App() {
         ))}
       </div>
 
-      <div style={{ display: "flex", gap: 32, flexWrap: "wrap", justifyContent: "center" }}>
+      <div style={{ display: "flex", gap: 32, flexWrap: "wrap", justifyContent: "center", position: "relative" }}>
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between", width: 360, alignItems: "center" }}>
             <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>Board</span>
@@ -519,32 +521,76 @@ export default function App() {
               SCORE: {state?.game.score ?? 0}
             </span>
           </div>
-          <canvas
-            ref={boardRef}
-            width={360}
-            height={360}
-            style={{ borderRadius: 8, display: "block", touchAction: "none" }}
-            onTouchStart={onTouchStart}
-            onTouchMove={onTouchMove}
-            onTouchEnd={onTouchEnd}
-          />
+          <div style={{ position: "relative" }}>
+            <canvas
+              ref={boardRef}
+              width={360}
+              height={360}
+              style={{ borderRadius: 8, display: "block", touchAction: "none" }}
+              onTouchStart={onTouchStart}
+              onTouchMove={onTouchMove}
+              onTouchEnd={onTouchEnd}
+            />
+            {isGameOver && (
+              <div style={{
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: "100%",
+                height: "100%",
+                borderRadius: 8,
+                background: "rgba(0, 0, 0, 0.6)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 10,
+              }}>
+                <div style={{
+                  background: "#f65e3b",
+                  color: "#f9f6f2",
+                  padding: "24px",
+                  borderRadius: 8,
+                  textAlign: "center",
+                  boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                }}>
+                  <div style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}>Game Over!</div>
+                  <div style={{ fontSize: 14, opacity: 0.9, marginBottom: 12 }}>No more valid moves</div>
+                  <button
+                    onClick={() => startNewGame(config.rows, config.cols)}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 4,
+                      border: "none",
+                      background: "#f9f6f2",
+                      color: "#f65e3b",
+                      fontSize: 12,
+                      fontWeight: 700,
+                      cursor: "pointer",
+                    }}
+                  >
+                    New Game
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           <div className="arrow-buttons" style={{ display: "flex", gap: 8, marginTop: 8 }}>
             {["↑","↓","←","→"].map((dir) => (
               <button
                 key={dir}
-                disabled={state?.game.is_terminated}
+                disabled={isGameOver}
                 onClick={() => {
                   const dmap: Record<string, Direction> = { "↑": "Up", "↓": "Down", "←": "Left", "→": "Right" };
                   handleMove(dmap[dir]);
                 }}
-                style={{ width: 44, height: 44, borderRadius: 6, border: "none", background: "#bbada0", color: "#f9f6f2", fontSize: 18, fontWeight: 700, cursor: state?.game.is_terminated ? "not-allowed" : "pointer", opacity: state?.game.is_terminated ? 0.5 : 1 }}
+                style={{ width: 44, height: 44, borderRadius: 6, border: "none", background: "#bbada0", color: "#f9f6f2", fontSize: 18, fontWeight: 700, cursor: isGameOver ? "not-allowed" : "pointer", opacity: isGameOver ? 0.5 : 1 }}
               >
                 {dir}
               </button>
             ))}
           </div>
           {lastMove && (
-            <div style={{ marginTop: 8, padding: "4px 10px", borderRadius: 4, background: lastMove.nodes.length === 0 && lastMove.edges.length === 0 ? "#f65e3b" : "#8f7a66", color: "#f9f6f2", fontSize: 12, fontWeight: 700 }}>
+            <div style={{ marginTop: 8, padding: "4px 10px", borderRadius: 4, background: lastMove.nodes.length === 0 && lastMove.edges.length === 0 ? "#f65e3b" : "#8f7a66", color: "#f9f6f2", fontSize: 12, fontWeight: 600 }}>
               {lastMove.nodes.length === 0 && lastMove.edges.length === 0
                 ? "Invalid move — no graph change"
                 : `Valid move · +${lastMove.nodes.length} nodes · +${lastMove.edges.length} edges · +${lastMove.score_delta} score`}
@@ -607,13 +653,14 @@ export default function App() {
       )}
 
       <div style={{ marginTop: 32, padding: "16px 24px", background: "#ede0c8", borderRadius: 8, maxWidth: 600, width: "100%" }}>
-        <h3 style={{ color: "#776e65", margin: "0 0 8px", fontSize: 14, fontWeight: 700 }}>Model Refactor</h3>
+        <h3 style={{ color: "#776e65", margin: "0 0 8px", fontSize: 14, fontWeight: 700 }}>Game Over Fix</h3>
         <ul style={{ color: "#776e65", fontSize: 13, margin: 0, paddingLeft: 18, lineHeight: 1.8 }}>
-          <li>Nodes are pure board states (no <code>NodeKind</code>)</li>
-          <li>Edges are atomic transitions with <code>kind</code>: <code>Move</code> or <code>Spawn</code></li>
-          <li>Valid move creates two nodes and two edges: current → merge → spawn</li>
-          <li>Game instance tracks <code>source_node_id</code>, <code>current_node_id</code>, score, terminated</li>
-          <li>Graph export/import persists the full DAG and all game instances</li>
+          <li>✅ Fixed: Game over check now uses <code>state.game.is_terminated</code></li>
+          <li>✅ Buttons properly disabled when game is terminated</li>
+          <li>✅ Game over modal overlay with "New Game" button</li>
+          <li>✅ Keyboard/touch input blocked when game is over</li>
+          <li>Nodes: Pure board states (no <code>NodeKind</code>)</li>
+          <li>Edges: Atomic transitions with <code>kind</code>: <code>Move</code> or <code>Spawn</code></li>
         </ul>
       </div>
     </div>
