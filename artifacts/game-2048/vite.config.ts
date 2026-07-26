@@ -1,10 +1,12 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import path from "path";
+import path from "node:path";
 
 const rawPort = process.env.PORT;
 if (!rawPort) {
-  throw new Error("PORT environment variable is required but was not provided.");
+  throw new Error(
+    "PORT environment variable is required but was not provided.",
+  );
 }
 const port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
@@ -13,7 +15,9 @@ if (Number.isNaN(port) || port <= 0) {
 
 const basePath = process.env.BASE_PATH;
 if (!basePath) {
-  throw new Error("BASE_PATH environment variable is required but was not provided.");
+  throw new Error(
+    "BASE_PATH environment variable is required but was not provided.",
+  );
 }
 
 export default defineConfig({

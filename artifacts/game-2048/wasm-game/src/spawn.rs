@@ -23,7 +23,7 @@ pub fn sample_spawn(board: &Board, config: &SpawnConfig) -> Vec<Cell> {
 /// List all possible spawn outcomes for a board. Useful for enumeration and
 /// future probabilistic branching. Each outcome is a single tile placed on an
 /// empty cell, using the first configured spawn value.
-pub fn all_spawn_outcomes(board: &Board, config: &SpawnConfig) -> Vec<Vec<Cell>> {
+pub fn _all_spawn_outcomes(board: &Board, config: &SpawnConfig) -> Vec<Vec<Cell>> {
     let empties = board.empty_positions();
     if empties.is_empty() {
         return vec![Vec::new()];

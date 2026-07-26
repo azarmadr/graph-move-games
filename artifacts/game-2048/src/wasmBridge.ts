@@ -34,24 +34,24 @@ export interface Edge {
   kind: EdgeKind;
 }
 
-export interface GraphSnapshot {
-  nodes: Node[];
-  edges: Edge[];
-}
-
 export interface GameInstance {
-  game_id: string;
+  id: string;
   source_node_id: string;
   current_node_id: string;
   score: number;
   is_terminated: boolean;
 }
 
+export type NodeId = string;
+export type EdgeId = string;
+export interface GraphStore {
+  nodes: { [key: NodeId]: Node };
+  edges: { [key: EdgeId]: Edge };
+}
+
 export interface GameState {
-  active_game_id: string;
   game: GameInstance;
   active_board: Board;
-  graph: GraphSnapshot;
 }
 
 export interface GraphDelta {
@@ -77,10 +77,10 @@ export interface SpawnConfig {
   spawns: { [key: number]: number }; // mapping from tile value to spawn probability
 }
 
-export interface ExportData {
+export interface Engine {
   version: number;
-  graph: GraphSnapshot;
-  games: GameInstance[];
+  graph: GraphStore;
+  games: { [key: string]: GameInstance };
   next_game_nonce: number;
 }
 
@@ -88,8 +88,6 @@ export interface ImportResult {
   success: boolean;
   games: GameState[];
 }
-
-/* ── WASM module loader ────────────────────────────────────────────── */
 
 let wasmModule: any = null;
 

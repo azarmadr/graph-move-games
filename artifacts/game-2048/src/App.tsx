@@ -13,6 +13,8 @@ import {
   type GameConfig,
   type GameInstance,
   type GraphDelta,
+  type Cell,
+  type Engine,
 } from "./wasmBridge";
 
 const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
@@ -84,13 +86,14 @@ function isMoveKind(edge: Edge): { Move: { direction: Direction } } | null {
     : null;
 }
 
-function isSpawnKind(edge: Edge): { Spawn: { cells: any[] } } | null {
-  return edge.kind.Spawn ? (edge.kind as { Spawn: { cells: any[] } }) : null;
+function isSpawnKind(edge: Edge): { Spawn: { cells: Cell[] } } | null {
+  return edge.kind.Spawn ? (edge.kind as { Spawn: { cells: Cell[] } }) : null;
 }
 
 function drawFocusedGraph(
   canvas: HTMLCanvasElement,
   state: GameState,
+  engine: Engine,
 ): {
   nodes: Map<string, { x: number; y: number }>;
   edges: {
@@ -106,9 +109,9 @@ function drawFocusedGraph(
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, w, h);
 
-  const { nodes, edges } = state.graph;
+  const { nodes, edges } = engine.graph;
   const currentId = state.game.current_node_id;
-  const findNode = (id: string) => nodes.find((n) => n.node_id === id);
+  const findNode = (id: string) => nodes[id];
 
   // Build a vertical chain: ancestor -> merge -> current
   const current = findNode(currentId);
@@ -138,7 +141,8 @@ function drawFocusedGraph(
 
   // Merge nodes: edges pointing to current with Spawn kind
   const mergeIds = new Set<string>();
-  for (const e of edges) {
+  for (const id in edges) {
+    const e = edges[id];
     if (e.to === currentId && isSpawnKind(e)) {
       mergeIds.add(e.from);
     }
@@ -158,7 +162,8 @@ function drawFocusedGraph(
   // Ancestor nodes: edges pointing to merge nodes with Move kind
   const ancestorIds = new Set<string>();
   for (const mid of mergeIds) {
-    for (const e of edges) {
+    for (const id in edges) {
+      const e = edges[id];
       if (e.to === mid && isMoveKind(e)) {
         ancestorIds.add(e.from);
       }
@@ -229,7 +234,8 @@ function drawFocusedGraph(
     from: { x: number; y: number };
     to: { x: number; y: number };
   }[] = [];
-  for (const e of edges) {
+  for (const id in edges) {
+    const e = edges[id];
     if (!positions.has(e.from) || !positions.has(e.to)) continue;
     const from = positions.get(e.from)!;
     const to = positions.get(e.to)!;
@@ -310,7 +316,7 @@ function drawFocusedGraph(
   ctx.font = "11px monospace";
   ctx.textAlign = "left";
   ctx.fillText(
-    `Game ${state.active_game_id} · Node ${currentId} · Score ${state.game.score} · ${state.game.is_terminated ? "Terminated" : "Active"}`,
+    `Game ${state.game.id} · Node ${currentId} · Score ${state.game.score} · ${state.game.is_terminated ? "Terminated" : "Active"}`,
     12,
     h - 12,
   );
@@ -322,10 +328,11 @@ export default function App() {
   const boardRef = useRef<HTMLCanvasElement>(null);
   const graphRef = useRef<HTMLCanvasElement>(null);
   const [state, setState] = useState<GameState | null>(null);
+  const [engine, setEngine] = useState<Engine | null>(null);
   const [config, setConfig] = useState<GameConfig>({
     rows: 4,
     cols: 4,
-    spawn_config: { spawns: { [2]: 9, [4]: 1 } },
+    spawn_config: { spawns: { 2: 9, 4: 1 } },
   });
   const [allGames, setAllGames] = useState<GameInstance[]>([]);
   const [hover, setHover] = useState<{
@@ -346,8 +353,8 @@ export default function App() {
   useEffect(() => {
     if (!state) return;
     if (boardRef.current) drawBoard(boardRef.current, state);
-    if (graphRef.current) {
-      const layout = drawFocusedGraph(graphRef.current, state);
+    if (graphRef.current && engine) {
+      const layout = drawFocusedGraph(graphRef.current, state, engine);
       graphLayoutRef.current = layout;
     }
   }, [state]);
@@ -355,7 +362,7 @@ export default function App() {
   const handleMove = async (dir: Direction) => {
     if (!state || state.game.is_terminated) return;
     try {
-      const resp = await makeMove(state.active_game_id, dir);
+      const resp = await makeMove(state.game.id, dir);
       setLastMove(resp.delta);
       setState(resp.game_state);
     } catch (e) {
@@ -369,12 +376,13 @@ export default function App() {
     if (!state) return;
     exportGraph()
       .then((data) => {
+        setEngine(data);
         const payload = JSON.stringify({
           exportData: data,
-          activeGameId: state.active_game_id,
+          activeGameId: state.game.id,
         });
         localStorage.setItem(STORAGE_KEY, payload);
-        setAllGames(data.games);
+        setAllGames(Object.values(data.games));
       })
       .catch((e) => console.error("autosave failed:", e));
   }, [state]);
@@ -382,10 +390,13 @@ export default function App() {
   useEffect(() => {
     loadWasm().then(async () => {
       const saved = localStorage.getItem(STORAGE_KEY);
+      console.trace("restoring from localStorage:", saved);
       if (saved) {
         try {
           const { exportData, activeGameId } = JSON.parse(saved);
           const result = await importGraph(JSON.stringify(exportData));
+          await exportGraph().then(setEngine);
+          console.log({ engine });
           setLastMove(null);
           setAllGames(result.games.map((g) => g.game));
           if (result.success && result.games.length > 0) {
@@ -397,7 +408,9 @@ export default function App() {
           console.error("restore failed:", e);
         }
       }
+      console.trace("Creating games with config", { config });
       const s = await createGameWithConfig(config);
+      console.trace("Saved games", { s });
       setLastMove(null);
       setState(s);
       setAllGames((prev) => [...prev, s.game]);
@@ -459,7 +472,7 @@ export default function App() {
     const newConfig = {
       rows,
       cols,
-      spawn_config: { spawns: { [2]: 9, [4]: 1 } },
+      spawn_config: { spawns: { 2: 9, 4: 1 } },
     };
     setConfig(newConfig);
     const s = await createGameWithConfig(newConfig);
@@ -483,7 +496,7 @@ export default function App() {
     const half = 22;
     for (const [nodeId, pos] of layout.nodes.entries()) {
       if (Math.abs(pos.x - x) <= half && Math.abs(pos.y - y) <= half) {
-        const node = state?.graph.nodes.find((n) => n.node_id === nodeId);
+        const node = state?.graph.nodes[nodeId];
         if (!node) continue;
         const tiles = node.board.tiles
           .map((c) => `${c.tile} @ ${c.pos.r},${c.pos.c}`)
@@ -530,7 +543,8 @@ export default function App() {
     const layout = graphLayoutRef.current;
     if (!layout) return null;
     const threshold = 6;
-    for (const { edge, from, to } of layout.edges) {
+    for (const id in layout.edges) {
+      const { edge, from, to } = layout.edges[id];
       if (distToSegment(x, y, from.x, from.y, to.x, to.y) < threshold) {
         const move = isMoveKind(edge);
         const spawn = isSpawnKind(edge);
@@ -852,7 +866,7 @@ export default function App() {
             </span>
             <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
               <select
-                value={state?.active_game_id ?? ""}
+                value={state?.game.id ?? ""}
                 onChange={(e) => selectGame(e.target.value)}
                 style={{
                   padding: "3px 8px",
@@ -866,15 +880,15 @@ export default function App() {
                 }}
               >
                 {allGames.map((g) => (
-                  <option key={g.game_id} value={g.game_id}>
-                    {g.game_id.slice(0, 8)} · Score {g.score}{" "}
+                  <option key={g.id} value={g.id}>
+                    {g.id.slice(0, 8)} · Score {g.score}{" "}
                     {g.is_terminated ? "· Terminated" : ""}
                   </option>
                 ))}
               </select>
               <span style={{ color: "#9b8f82", fontSize: 12 }}>
                 {state
-                  ? `${state.graph.nodes.length} nodes · ${state.graph.edges.length} edges`
+                  ? `${engine && engine.graph.nodes.length} nodes · ${engine && engine.graph.edges.length} edges`
                   : "loading…"}
               </span>
               <button

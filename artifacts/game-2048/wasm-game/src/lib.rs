@@ -1,4 +1,4 @@
-use wasm_bindgen::prelude::*;
+use {std::ops::Deref, wasm_bindgen::prelude::*};
 
 mod game;
 mod graph;
@@ -39,7 +39,7 @@ pub fn create_game() -> Result<String, JsValue> {
 #[wasm_bindgen]
 pub fn create_game_with_config(config_json: String) -> Result<String, JsValue> {
     let config: GameConfig = serde_json::from_str(&config_json)
-        .map_err(|err| JsValue::from_str(&format!("parse error: {}", err)))?;
+        .map_err(|err| JsValue::from_str(&format!("GameConfig parse error: {}", err)))?;
 
     ENGINE.with(|e| {
         let mut engine = e.borrow_mut();
@@ -91,8 +91,7 @@ pub fn get_state(game_id_str: String) -> Result<String, JsValue> {
 pub fn export_graph() -> Result<String, JsValue> {
     ENGINE.with(|e| {
         let engine = e.borrow();
-        let data = engine.export();
-        serde_json::to_string(&data)
+        serde_json::to_string(&engine.deref())
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
     })
 }
@@ -101,7 +100,7 @@ pub fn export_graph() -> Result<String, JsValue> {
 /// Returns an import result JSON with `success` and `games`.
 #[wasm_bindgen]
 pub fn import_graph(json: String) -> Result<String, JsValue> {
-    let data: ExportData = serde_json::from_str(&json)
+    let data: Engine = serde_json::from_str(&json)
         .map_err(|err| JsValue::from_str(&format!("parse error: {}", err)))?;
 
     ENGINE.with(|e| {

@@ -230,7 +230,6 @@ pub enum EdgeKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edge {
-    pub edge_id: EdgeId,
     pub from: NodeId,
     pub to: NodeId,
     pub kind: EdgeKind,
@@ -239,7 +238,7 @@ pub struct Edge {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphDelta {
     pub is_terminated: bool,
-    pub nodes: Vec<Node>,
+    pub nodes: Vec<(NodeId, Node)>,
     pub edges: Vec<Edge>,
     pub current_node_id: NodeId,
     pub score_delta: u64,
@@ -259,7 +258,7 @@ impl GraphDelta {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameInstance {
-    pub game_id: GameId,
+    pub id: GameId,
     pub source_node_id: NodeId,
     pub current_node_id: NodeId,
     pub score: u64,
@@ -267,18 +266,10 @@ pub struct GameInstance {
     pub config: GameConfig,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameState {
-    pub active_game_id: GameId,
     pub game: GameInstance,
     pub active_board: Board,
-    pub graph: GraphSnapshot,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphSnapshot {
-    pub nodes: Vec<Node>,
-    pub edges: Vec<Edge>,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]
@@ -287,7 +278,7 @@ pub struct MoveRequest {
     pub direction: Direction,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct MoveResponse {
     pub game_state: GameState,
     pub delta: GraphDelta,
@@ -323,15 +314,7 @@ impl Default for GameConfig {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ExportData {
-    pub version: u32,
-    pub graph: GraphSnapshot,
-    pub games: Vec<GameInstance>,
-    pub next_game_nonce: u64,
-}
-
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ImportResult {
     pub success: bool,
     pub games: Vec<GameState>,

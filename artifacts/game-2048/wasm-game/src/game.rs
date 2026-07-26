@@ -1,9 +1,12 @@
 use {
     crate::{graph::GraphStore, move_logic::resolve_move, spawn::sample_spawn, types::*},
+    serde::{Deserialize, Serialize},
     std::collections::HashMap,
 };
 
+#[derive(Serialize, Debug, Deserialize)]
 pub struct Engine {
+    pub version: u32,
     graph: GraphStore,
     games: HashMap<GameId, GameInstance>,
     next_game_nonce: u64,
@@ -12,6 +15,7 @@ pub struct Engine {
 impl Engine {
     pub fn new() -> Self {
         Self {
+            version: 1,
             graph: GraphStore::new(),
             games: HashMap::new(),
             next_game_nonce: 1,
@@ -33,8 +37,7 @@ impl Engine {
 
     /// Create a game instance with a custom board. Useful for testing edge cases
     /// such as game-over states.
-    #[allow(dead_code)]
-    pub fn create_game_with_board(&mut self, board: Board) -> Result<GameState, String> {
+    pub fn _create_game_with_board(&mut self, board: Board) -> Result<GameState, String> {
         let game_id = GameId::from_nonce(self.next_game_nonce);
         self.next_game_nonce += 1;
         self.create_game_with_board_inner(game_id, board)
@@ -49,9 +52,9 @@ impl Engine {
         let is_terminated = !has_any_valid_move_helper(&board);
 
         let game = GameInstance {
-            game_id,
-            source_node_id: start_node.node_id,
-            current_node_id: start_node.node_id,
+            id: game_id,
+            source_node_id: start_node,
+            current_node_id: start_node,
             score: 0,
             is_terminated,
             config: GameConfig {
@@ -64,10 +67,8 @@ impl Engine {
         self.games.insert(game_id, game.clone());
 
         Ok(GameState {
-            active_game_id: game_id,
             game,
             active_board: board,
-            graph: self.graph.snapshot(),
         })
     }
 
@@ -123,33 +124,33 @@ impl Engine {
         // Step 9: build delta
         let mut delta_nodes = Vec::new();
         if merge_created {
-            delta_nodes.push(merge_node.clone());
+            delta_nodes.push(self.graph.get_node_kv(&merge_node));
         }
         if spawn_created {
-            delta_nodes.push(spawn_node.clone());
+            delta_nodes.push(self.graph.get_node_kv(&spawn_node));
         }
 
         let move_edge = self.graph.insert_edge(
             game.current_node_id,
-            merge_node.node_id,
+            merge_node,
             EdgeKind::Move {
                 direction: req.direction,
             },
         );
         let spawn_edge = self.graph.insert_edge(
-            merge_node.node_id,
-            spawn_node.node_id,
+            merge_node,
+            spawn_node,
             EdgeKind::Spawn { cells: spawn_cells },
         );
 
-        game.current_node_id = spawn_node.node_id;
+        game.current_node_id = spawn_node;
         game.is_terminated = is_terminated;
         self.games.insert(req.game_id, game.clone());
         let delta = GraphDelta {
             is_terminated,
             nodes: delta_nodes,
             edges: vec![move_edge, spawn_edge],
-            current_node_id: spawn_node.node_id,
+            current_node_id: spawn_node,
             score_delta: merge_score as u64,
         };
 
@@ -174,20 +175,11 @@ impl Engine {
             .collect()
     }
 
-    pub fn export(&self) -> ExportData {
-        ExportData {
-            version: 1,
-            graph: self.graph.snapshot(),
-            games: self.games.values().cloned().collect(),
-            next_game_nonce: self.next_game_nonce,
-        }
-    }
-
-    pub fn import(&mut self, data: ExportData) -> ImportResult {
+    pub fn import(&mut self, data: Self) -> ImportResult {
         self.graph.load_snapshot(data.graph);
         self.games.clear();
-        for game in data.games {
-            self.games.insert(game.game_id, game);
+        for (_game_id, game) in data.games {
+            self.games.insert(game.id, game);
         }
         self.next_game_nonce = data.next_game_nonce;
         ImportResult {
@@ -203,10 +195,8 @@ impl Engine {
             .map(|n| n.board.clone())
             .unwrap_or_else(Board::empty);
         GameState {
-            active_game_id: game.game_id,
             game,
             active_board: board,
-            graph: self.graph.snapshot(),
         }
     }
 }
@@ -335,6 +325,7 @@ mod tests {
 
     #[test]
     fn test_game_over_state_3x3() {
+        // TODO: move this to board tests. not supposed to test board logic here
         // Full 3x3 board with no adjacent equal tiles and no empty cells.
         // No move can change the board, so the game must be terminated on creation.
         let mut engine = Engine::new();
@@ -353,7 +344,7 @@ mod tests {
                 Cell::new(2, 2, 512),
             ],
         );
-        let state = engine.create_game_with_board(board).unwrap();
+        let state = engine._create_game_with_board(board).unwrap();
 
         assert!(
             state.game.is_terminated,
@@ -382,7 +373,7 @@ mod tests {
                 Cell::new(2, 2, 512),
             ],
         );
-        let state = engine.create_game_with_board(board).unwrap();
+        let state = engine._create_game_with_board(board).unwrap();
         let game_id = state.active_game_id;
         let initial_node_count = state.graph.nodes.len();
         let initial_edge_count = state.graph.edges.len();
@@ -441,7 +432,7 @@ mod tests {
                 Cell::new(2, 1, 256),
             ],
         );
-        let state = engine.create_game_with_board(board).unwrap();
+        let state = engine._create_game_with_board(board).unwrap();
         assert!(
             !state.game.is_terminated,
             "pre-move board should not be terminated"
