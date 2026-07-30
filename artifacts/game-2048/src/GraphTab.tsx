@@ -28,15 +28,15 @@ function edgeKey(edgeId: string) {
 }
 
 function edgeLabel(edge: Edge) {
-  if (edge.kind.Move) return `Move ${edge.kind.Move.direction}`;
+  if (edge.kind.Move) return `Move ${edge.kind.Move}`;
   if (edge.kind.Spawn) {
-    return `Spawn ${edge.kind.Spawn.cells.map((cell) => cell.tile).join(", ")}`;
+    return `Spawn ${edge.kind.Spawn.map((cell) => cell.tile).join(", ")}`;
   }
   return "Transition";
 }
 
 function boardSummary(node: Node) {
-  const tiles = node.board.tiles.map((cell) => cell.tile).join(" · ");
+  const tiles = node.tiles.map((cell) => cell.tile).join(" · ");
   return tiles || "Empty board";
 }
 
@@ -72,45 +72,51 @@ function makeDagLayout(graphData: GraphData): DagLayout {
   });
   layout.setDefaultEdgeLabel(() => ({}));
 
-  const nodes = Object.values(graphData.nodes);
-  const edges = Object.values(graphData.edges);
+  const nodes = graphData.nodes;
+  const edges = graphData.edges;
 
-  nodes.forEach((node) => {
-    layout.setNode(nodeKey(node.board_id), {
+  for (const board_id in nodes) {
+    const node = nodes[board_id];
+    layout.setNode(nodeKey(board_id), {
       width: NODE_SIZE,
       height: NODE_SIZE,
     });
-  });
+  }
 
-  edges.forEach((edge) => {
+  for (const edge_id in edges) {
+    const edge = edges[edge_id];
     const source = nodeKey(edge.from);
     const target = nodeKey(edge.to);
     if (
       layout.hasNode(source) &&
       layout.hasNode(target) &&
-      !layout.hasEdge(source, target, edgeKey(edge.edge_id))
+      !layout.hasEdge(source, target, edgeKey(edge_id))
     ) {
-      layout.setEdge(source, target, {}, edgeKey(edge.edge_id));
+      layout.setEdge(source, target, {}, edgeKey(edge_id));
     }
-  });
+  }
 
   dagre.layout(layout);
 
   const positions: Record<string, Point> = {};
-  nodes.forEach((node) => {
-    const position = layout.node(nodeKey(node.board_id));
+  for (const board_id in nodes) {
+    const node = nodes[board_id];
+    const position = layout.node(nodeKey(board_id));
     if (position) {
-      positions[nodeKey(node.board_id)] = { x: position.x, y: position.y };
+      positions[nodeKey(board_id)] = { x: position.x, y: position.y };
     }
-  });
+  }
 
-  const positionedEdges = edges.flatMap((edge) => {
+  const positionedEdges = Object.keys(edges).flatMap((edge_id) => {
+    const edge = edges[edge_id];
     const points = layout.edge({
       v: nodeKey(edge.from),
       w: nodeKey(edge.to),
-      name: edgeKey(edge.edge_id),
+      name: edgeKey(edge_id),
     });
-    return points?.points?.length ? [{ edge, points: points.points }] : [];
+    return points?.points?.length
+      ? [{ edge, edge_id, points: points.points }]
+      : [];
   });
 
   const graphSize = layout.graph();
@@ -148,6 +154,10 @@ export default function GraphTab({
   const selectedEdge = selectedId?.startsWith("edge:")
     ? graphData?.edges[selectedId.slice("edge:".length)]
     : undefined;
+  const selectedEdgeId = selectedEdge ? selectedId.slice("edge:".length) : null;
+  const selectedNodeId = selectedEdge
+    ? selectedId.slice("board:".length)
+    : null;
   const hoveredNode = hoveredId?.startsWith("board:")
     ? graphData?.nodes[hoveredId.slice("board:".length)]
     : undefined;
@@ -160,7 +170,7 @@ export default function GraphTab({
     return <div className="graph-empty">Build the graph by making a move.</div>;
   }
 
-  const nodes = Object.values(graphData.nodes);
+  const nodes = graphData.nodes;
   const nodeCount = nodes.length;
   const edgeCount = Object.keys(graphData.edges).length;
 
@@ -221,11 +231,11 @@ export default function GraphTab({
                 <path d="M 0 0 L 8 4 L 0 8 z" fill="#f72585" />
               </marker>
             </defs>
-            {layout.edges.map(({ edge, points }) => {
+            {layout.edges.map(({ edge, edge_id, points }) => {
               const color = edgeColor(edge);
               return (
                 <path
-                  key={edge.edge_id}
+                  key={edge_id}
                   d={edgePath(points)}
                   fill="none"
                   stroke={color}
@@ -236,25 +246,26 @@ export default function GraphTab({
                     edge.kind.Move ? "graph-arrow-move" : "graph-arrow-spawn"
                   })`}
                   className="graph-edge"
-                  onClick={() => setSelectedId(edgeKey(edge.edge_id))}
+                  onClick={() => setSelectedId(edgeKey(edge_id))}
                 />
               );
             })}
           </svg>
 
-          {nodes.map((node) => {
-            const position = layout.nodes[nodeKey(node.board_id)];
+          {Object.keys(nodes).map((board_id) => {
+            const node = nodes[board_id];
+            const position = layout.nodes[nodeKey(board_id)];
             if (!position) return null;
-            const isCurrent = node.board_id === activeGame?.current_board_id;
+            const isCurrent = board_id === activeGame?.current_board_id;
             const isSource = games.some(
-              (game) => game.source_board_id === node.board_id,
+              (game) => game.source_board_id === board_id,
             );
             const isSelected =
-              selectedId === nodeKey(node.board_id) ||
-              hoveredId === nodeKey(node.board_id);
+              selectedId === nodeKey(board_id) ||
+              hoveredId === nodeKey(board_id);
             return (
               <button
-                key={node.board_id}
+                key={board_id}
                 type="button"
                 className={[
                   "graph-board-card",
@@ -270,11 +281,11 @@ export default function GraphTab({
                   width: NODE_SIZE,
                   height: NODE_SIZE,
                 }}
-                onMouseEnter={() => setHoveredId(nodeKey(node.board_id))}
+                onMouseEnter={() => setHoveredId(nodeKey(board_id))}
                 onMouseLeave={() => setHoveredId(null)}
-                onFocus={() => setHoveredId(nodeKey(node.board_id))}
+                onFocus={() => setHoveredId(nodeKey(board_id))}
                 onBlur={() => setHoveredId(null)}
-                onClick={() => setSelectedId(nodeKey(node.board_id))}
+                onClick={() => setSelectedId(nodeKey(board_id))}
                 aria-label={`Board ${boardSummary(node)}`}
               >
                 <BoardThumbnail node={node} />
@@ -285,7 +296,7 @@ export default function GraphTab({
 
         {hoveredNode && (
           <div className="graph-hover-card">
-            <strong>Board {hoveredNode.board_id.slice(0, 12)}</strong>
+            <strong>Board {hoveredId.slice(0, 12)}</strong>
             <span>{boardSummary(hoveredNode)}</span>
           </div>
         )}
@@ -299,15 +310,15 @@ export default function GraphTab({
         {selectedNode && (
           <>
             <p className="eyebrow">Selected board</p>
-            <h3>{selectedNode.board_id}</h3>
-            <p>{selectedNode.board.dim.join(" × ")} board</p>
+            <h3>{selectedNodeId}</h3>
+            <p>{selectedNode.dim.join(" × ")} board</p>
             <p>{boardSummary(selectedNode)}</p>
           </>
         )}
         {selectedEdge && (
           <>
             <p className="eyebrow">Selected transition</p>
-            <h3>{selectedEdge.edge_id}</h3>
+            <h3>{selectedEdgeId}</h3>
             <p>{edgeLabel(selectedEdge)}</p>
             <p>
               {selectedEdge.from.slice(0, 10)} → {selectedEdge.to.slice(0, 10)}
@@ -320,9 +331,9 @@ export default function GraphTab({
 }
 
 function BoardThumbnail({ node }: { node: Node }) {
-  const [rows, cols] = node.board.dim;
+  const [rows, cols] = node.dim;
   const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
-  node.board.tiles.forEach((cell) => {
+  node.tiles.forEach((cell) => {
     if (grid[cell.pos.r]?.[cell.pos.c] !== undefined) {
       grid[cell.pos.r][cell.pos.c] = cell.tile;
     }

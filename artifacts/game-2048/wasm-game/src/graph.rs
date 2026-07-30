@@ -74,10 +74,8 @@ impl GraphStore {
             .and_then(|index| self.graph.node_weight(*index))
     }
 
-    pub fn node_data(&self, board_id: BoardId) -> Option<Node> {
-        self.get_node(board_id).map(|board| Node {
-            board: board.clone(),
-        })
+    pub fn node_data(&self, board_id: BoardId) -> Option<Board> {
+        self.get_node(board_id).cloned()
     }
 
     pub fn insert_edge(&mut self, from: BoardId, to: BoardId, edge: Edge) -> (EdgeId, bool) {
@@ -103,12 +101,7 @@ impl GraphStore {
         for node_index in self.graph.node_indices() {
             if let Some(board) = self.graph.node_weight(node_index) {
                 let board_id = BoardId::from_board(board);
-                nodes.insert(
-                    board_id,
-                    Node {
-                        board: board.clone(),
-                    },
-                );
+                nodes.insert(board_id, board.clone());
             }
         }
 

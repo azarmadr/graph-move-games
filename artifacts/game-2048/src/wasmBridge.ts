@@ -15,20 +15,14 @@ export interface Board {
   tiles: Cell[];
 }
 
-export interface Node {
-  board_id: string;
-  board: Board;
-}
-
 export type Direction = "Up" | "Down" | "Left" | "Right";
 
 export interface EdgeKind {
-  Move?: { direction: Direction };
-  Spawn?: { cells: Cell[] };
+  Move?: Direction;
+  Spawn?: Cell[];
 }
 
 export interface Edge {
-  edge_id: string;
   from: string;
   to: string;
   kind: EdgeKind;
@@ -46,7 +40,7 @@ export interface GameInstance {
 export type BoardId = string;
 export type EdgeId = string;
 export interface GraphData {
-  nodes: { [key: BoardId]: Node };
+  nodes: { [key: BoardId]: Board };
   edges: { [key: EdgeId]: Edge };
 }
 
@@ -58,7 +52,7 @@ export interface GameState {
 
 export interface GraphDelta {
   is_terminated: boolean;
-  nodes: Node[];
+  nodes: Board[];
   edges: Edge[];
   current_board_id: string;
   score_delta: number;

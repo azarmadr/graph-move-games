@@ -2,6 +2,7 @@
 name = "game-2048-wasm"
 version = "0.1.0"
 edition = "2021"
+description = "2048 game with graph"
 
 [lib]
 crate-type = ["cdylib", "rlib"]

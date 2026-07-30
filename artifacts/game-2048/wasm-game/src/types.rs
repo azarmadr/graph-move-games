@@ -33,7 +33,8 @@ impl Cell {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Board {
-    pub dim: (u8, u8), // (rows, cols) — e.g. (3,3) or (4,4)
+    /// (rows, cols)
+    pub dim: (u8, u8),
     pub tiles: Vec<Cell>,
 }
 
@@ -121,7 +122,6 @@ impl Board {
     }
 }
 
-/* ── Strongly typed IDs ──────────────────────────────────────────── */
 macro_rules! strong_id {
     ($name:ident) => {
         #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -178,8 +178,8 @@ impl EdgeId {
         let mut h = Fnv1a::new();
         h.write_u64(from.0);
         h.write_u64(to.0);
-        match &edge.kind {
-            EdgeKind::Move { direction } => {
+        match &edge {
+            Edge::Move(direction) => {
                 h.write_u8(0);
                 h.write_u8(match direction {
                     Direction::Up => 0,
@@ -188,7 +188,7 @@ impl EdgeId {
                     Direction::Right => 3,
                 });
             }
-            EdgeKind::Spawn { cells } => {
+            Edge::Spawn(cells) => {
                 h.write_u8(1);
                 for cell in cells {
                     h.write_u8(cell.pos.r);
@@ -209,11 +209,6 @@ impl GameId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Node {
-    pub board: Board,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Direction {
     Up,
@@ -223,14 +218,9 @@ pub enum Direction {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum EdgeKind {
-    Move { direction: Direction },
-    Spawn { cells: Vec<Cell> },
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Edge {
-    pub kind: EdgeKind,
+pub enum Edge {
+    Move(Direction),
+    Spawn(Vec<Cell>),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -242,14 +232,14 @@ pub struct GraphEdge {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphData {
-    pub nodes: HashMap<BoardId, Node>,
+    pub nodes: HashMap<BoardId, Board>,
     pub edges: HashMap<EdgeId, GraphEdge>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphDelta {
     pub is_terminated: bool,
-    pub nodes: Vec<Node>,
+    pub nodes: Vec<Board>,
     pub edges: Vec<GraphEdge>,
     pub current_board_id: BoardId,
     pub score_delta: u64,

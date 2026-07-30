@@ -136,14 +136,8 @@ impl Engine {
             }
         }
 
-        let move_edge = Edge {
-            kind: EdgeKind::Move {
-                direction: req.direction,
-            },
-        };
-        let spawn_edge = Edge {
-            kind: EdgeKind::Spawn { cells: spawn_cells },
-        };
+        let move_edge = Edge::Move(req.direction);
+        let spawn_edge = Edge::Spawn(spawn_cells);
         let (move_edge_id, move_edge_created) =
             self.graph
                 .insert_edge(game.current_board_id, merge_board_id, move_edge);
@@ -278,14 +272,7 @@ mod tests {
             .graph
             .edges
             .values()
-            .find(|e| {
-                matches!(
-                    e.kind,
-                    EdgeKind::Move {
-                        direction: Direction::Right
-                    }
-                )
-            })
+            .find(|e| matches!(e.kind, Edge::Move(Direction::Right)))
             .unwrap();
         assert_eq!(move_edge.from, current_id);
 
@@ -293,7 +280,7 @@ mod tests {
             .graph
             .edges
             .values()
-            .find(|e| matches!(e.kind, EdgeKind::Spawn { .. }))
+            .find(|e| matches!(e.kind, Edge::Spawn { .. }))
             .unwrap();
         assert_eq!(spawn_edge.from, move_edge.to);
         assert_eq!(spawn_edge.to, new_current);
