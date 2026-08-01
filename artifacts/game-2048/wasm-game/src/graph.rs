@@ -1,65 +1,137 @@
 use {
     crate::types::*,
+    petgraph::{
+        graph::{DiGraph, EdgeIndex, NodeIndex},
+        visit::EdgeRef,
+    },
     serde::{Deserialize, Serialize},
     std::collections::HashMap,
 };
 
-/// The global DAG store.
+/// Canonical global DAG storage.
 ///
-/// Nodes are keyed by their content-addressed board hash (NodeId), enforcing
-/// deduplication: the same board state always resolves to the same node.
-/// Edges are stored as a Vec because transitions are append-only.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+/// The graph owns boards and transition payloads. The two indexes are derived
+/// lookup accelerators and are rebuilt after deserialization.
+#[derive(Serialize, Deserialize, Debug)]
 pub struct GraphStore {
-    nodes: HashMap<NodeId, Node>,
-    edges: HashMap<EdgeId, Edge>,
+    pub graph: DiGraph<Board, Edge>,
+    #[serde(skip)]
+    pub board_ids: HashMap<BoardId, NodeIndex>,
+    #[serde(skip)]
+    pub edge_ids: HashMap<EdgeId, EdgeIndex>,
 }
 
 impl GraphStore {
     pub fn new() -> Self {
         Self {
-            nodes: HashMap::new(),
-            edges: HashMap::new(),
+            graph: DiGraph::new(),
+            board_ids: HashMap::new(),
+            edge_ids: HashMap::new(),
         }
     }
 
-    pub fn get_node_kv(&self, node_id: &NodeId) -> (NodeId, Node) {
-        (*node_id, self.nodes.get(node_id).unwrap().clone())
-    }
+    pub fn rebuild_indexes(&mut self) {
+        self.board_ids.clear();
+        self.edge_ids.clear();
 
-    /// Get an existing node for a board, or create one if it doesn't exist.
-    /// Returns the node and a flag indicating whether it was newly created.
-    pub fn get_or_create_node(&mut self, board: Board) -> (NodeId, bool) {
-        let node_id = NodeId::from_board(&board);
-        if self.nodes.contains_key(&node_id) {
-            return (node_id, false);
+        for node_index in self.graph.node_indices() {
+            if let Some(board) = self.graph.node_weight(node_index) {
+                self.board_ids
+                    .insert(BoardId::from_board(board), node_index);
+            }
         }
-        let node = Node { board };
-        self.nodes.insert(node_id, node);
-        (node_id, true)
-    }
 
-    /// Insert an edge. With content-addressed edge IDs, identical transitions
-    /// from different games converge to the same edge ID.
-    pub fn insert_edge(&mut self, from: NodeId, to: NodeId, kind: EdgeKind) -> Edge {
-        let edge_id = EdgeId::from_content(from, to, &kind);
-        let edge = Edge { from, to, kind };
-        // Avoid duplicate edges with the same ID.
-        self.edges.insert(edge_id, edge.clone());
-        edge
-    }
-
-    pub fn get_node(&self, id: NodeId) -> Option<&Node> {
-        self.nodes.get(&id)
-    }
-
-    /// Replace the entire store with the given snapshot. Used during import.
-    pub fn load_snapshot(&mut self, snapshot: GraphStore) {
-        for (node_id, node) in snapshot.nodes {
-            self.nodes.insert(node_id, node); // TODO: should node_id's be recalculated
+        for edge_ref in self.graph.edge_references() {
+            let from = edge_ref.source();
+            let to = edge_ref.target();
+            let Some(from_board) = self.graph.node_weight(from) else {
+                continue;
+            };
+            let Some(to_board) = self.graph.node_weight(to) else {
+                continue;
+            };
+            let from_id = BoardId::from_board(from_board);
+            let to_id = BoardId::from_board(to_board);
+            let edge_id = EdgeId::from_content(from_id, to_id, edge_ref.weight());
+            self.edge_ids.insert(edge_id, edge_ref.id());
         }
-        for (_edge_id, edge) in snapshot.edges {
-            self.insert_edge(edge.from, edge.to, edge.kind);
+    }
+
+    pub fn get_or_create_node(&mut self, board: Board) -> (BoardId, bool) {
+        let board_id = BoardId::from_board(&board);
+        if self.board_ids.contains_key(&board_id) {
+            return (board_id, false);
         }
+
+        let node_index = self.graph.add_node(board);
+        self.board_ids.insert(board_id, node_index);
+        (board_id, true)
+    }
+
+    pub fn get_node(&self, board_id: BoardId) -> Option<&Board> {
+        self.board_ids
+            .get(&board_id)
+            .and_then(|index| self.graph.node_weight(*index))
+    }
+
+    pub fn node_data(&self, board_id: BoardId) -> Option<Node> {
+        self.get_node(board_id).map(|board| Node {
+            board: board.clone(),
+        })
+    }
+
+    pub fn insert_edge(&mut self, from: BoardId, to: BoardId, edge: Edge) -> (EdgeId, bool) {
+        let edge_id = EdgeId::from_content(from, to, &edge);
+        if self.edge_ids.contains_key(&edge_id) {
+            return (edge_id, false);
+        }
+
+        let Some(&from_index) = self.board_ids.get(&from) else {
+            return (edge_id, false);
+        };
+        let Some(&to_index) = self.board_ids.get(&to) else {
+            return (edge_id, false);
+        };
+
+        let edge_index = self.graph.add_edge(from_index, to_index, edge);
+        self.edge_ids.insert(edge_id, edge_index);
+        (edge_id, true)
+    }
+
+    pub fn graph_data(&self) -> GraphData {
+        let mut nodes = HashMap::new();
+        for node_index in self.graph.node_indices() {
+            if let Some(board) = self.graph.node_weight(node_index) {
+                let board_id = BoardId::from_board(board);
+                nodes.insert(
+                    board_id,
+                    Node {
+                        board: board.clone(),
+                    },
+                );
+            }
+        }
+
+        let mut edges = HashMap::new();
+        for edge_ref in self.graph.edge_references() {
+            let from_board = self.graph.node_weight(edge_ref.source());
+            let to_board = self.graph.node_weight(edge_ref.target());
+            let (Some(from_board), Some(to_board)) = (from_board, to_board) else {
+                continue;
+            };
+            let from = BoardId::from_board(from_board);
+            let to = BoardId::from_board(to_board);
+            let edge_id = EdgeId::from_content(from, to, edge_ref.weight());
+            edges.insert(
+                edge_id,
+                GraphEdge {
+                    from,
+                    to,
+                    kind: edge_ref.weight().clone(),
+                },
+            );
+        }
+
+        GraphData { nodes, edges }
     }
 }

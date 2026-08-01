@@ -16,7 +16,7 @@ export interface Board {
 }
 
 export interface Node {
-  node_id: string;
+  board_id: string;
   board: Board;
 }
 
@@ -36,29 +36,31 @@ export interface Edge {
 
 export interface GameInstance {
   id: string;
-  source_node_id: string;
-  current_node_id: string;
+  source_board_id: string;
+  current_board_id: string;
   score: number;
   is_terminated: boolean;
+  config: GameConfig;
 }
 
-export type NodeId = string;
+export type BoardId = string;
 export type EdgeId = string;
-export interface GraphStore {
-  nodes: { [key: NodeId]: Node };
+export interface GraphData {
+  nodes: { [key: BoardId]: Node };
   edges: { [key: EdgeId]: Edge };
 }
 
 export interface GameState {
   game: GameInstance;
   active_board: Board;
+  graph: GraphData;
 }
 
 export interface GraphDelta {
   is_terminated: boolean;
   nodes: Node[];
   edges: Edge[];
-  current_node_id: string;
+  current_board_id: string;
   score_delta: number;
 }
 
@@ -79,10 +81,12 @@ export interface SpawnConfig {
 
 export interface Engine {
   version: number;
-  graph: GraphStore;
+  graph: GraphData;
   games: { [key: string]: GameInstance };
   next_game_nonce: number;
 }
+
+export type ExportData = Engine;
 
 export interface ImportResult {
   success: boolean;

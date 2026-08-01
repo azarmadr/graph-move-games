@@ -135,7 +135,7 @@ macro_rules! strong_id {
     };
 }
 
-strong_id!(NodeId);
+strong_id!(BoardId);
 strong_id!(EdgeId);
 strong_id!(GameId);
 
@@ -158,11 +158,11 @@ macro_rules! id_string_serde {
     };
 }
 
-id_string_serde!(NodeId);
+id_string_serde!(BoardId);
 id_string_serde!(EdgeId);
 id_string_serde!(GameId);
 
-impl NodeId {
+impl BoardId {
     /// Content-addressed ID: hash of the board content only.
     /// All board states are globally deduplicated by this ID.
     pub fn from_board(board: &Board) -> Self {
@@ -173,12 +173,12 @@ impl NodeId {
 }
 
 impl EdgeId {
-    /// Content-addressed ID: hash of (from, to, kind).
-    pub fn from_content(from: NodeId, to: NodeId, kind: &EdgeKind) -> Self {
+    /// Content-addressed ID: hash of (from board ID, to board ID, edge payload).
+    pub fn from_content(from: BoardId, to: BoardId, edge: &Edge) -> Self {
         let mut h = Fnv1a::new();
         h.write_u64(from.0);
         h.write_u64(to.0);
-        match kind {
+        match &edge.kind {
             EdgeKind::Move { direction } => {
                 h.write_u8(0);
                 h.write_u8(match direction {
@@ -230,27 +230,38 @@ pub enum EdgeKind {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edge {
-    pub from: NodeId,
-    pub to: NodeId,
     pub kind: EdgeKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub from: BoardId,
+    pub to: BoardId,
+    pub kind: Edge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphData {
+    pub nodes: HashMap<BoardId, Node>,
+    pub edges: HashMap<EdgeId, GraphEdge>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GraphDelta {
     pub is_terminated: bool,
-    pub nodes: Vec<(NodeId, Node)>,
-    pub edges: Vec<Edge>,
-    pub current_node_id: NodeId,
+    pub nodes: Vec<Node>,
+    pub edges: Vec<GraphEdge>,
+    pub current_board_id: BoardId,
     pub score_delta: u64,
 }
 
 impl GraphDelta {
-    pub fn empty(terminated: bool, current_node_id: NodeId) -> Self {
+    pub fn empty(terminated: bool, current_board_id: BoardId) -> Self {
         Self {
             is_terminated: terminated,
             nodes: Vec::new(),
             edges: Vec::new(),
-            current_node_id,
+            current_board_id,
             score_delta: 0,
         }
     }
@@ -259,8 +270,8 @@ impl GraphDelta {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameInstance {
     pub id: GameId,
-    pub source_node_id: NodeId,
-    pub current_node_id: NodeId,
+    pub source_board_id: BoardId,
+    pub current_board_id: BoardId,
     pub score: u64,
     pub is_terminated: bool,
     pub config: GameConfig,
@@ -270,6 +281,7 @@ pub struct GameInstance {
 pub struct GameState {
     pub game: GameInstance,
     pub active_board: Board,
+    pub graph: GraphData,
 }
 
 #[derive(Debug, Clone, Copy, Deserialize)]

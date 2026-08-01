@@ -14,8 +14,9 @@ import {
   type GameInstance,
   type GraphDelta,
   type Cell,
-  type Engine,
+  type GraphData,
 } from "./wasmBridge";
+import GraphTab from "./GraphTab";
 
 const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
   0: { bg: "#cdc1b4", fg: "#cdc1b4" },
@@ -93,7 +94,7 @@ function isSpawnKind(edge: Edge): { Spawn: { cells: Cell[] } } | null {
 function drawFocusedGraph(
   canvas: HTMLCanvasElement,
   state: GameState,
-  engine: Engine,
+  graph: GraphData,
 ): {
   nodes: Map<string, { x: number; y: number }>;
   edges: {
@@ -109,8 +110,8 @@ function drawFocusedGraph(
   ctx.fillStyle = "#1a1a2e";
   ctx.fillRect(0, 0, w, h);
 
-  const { nodes, edges } = engine.graph;
-  const currentId = state.game.current_node_id;
+  const { nodes, edges } = graph;
+  const currentId = state.game.current_board_id;
   const findNode = (id: string) => nodes[id];
 
   // Build a vertical chain: ancestor -> merge -> current
@@ -193,7 +194,7 @@ function drawFocusedGraph(
     if (levelNodes.length === 0) continue;
     const startX = cx - (levelNodes.length - 1) * 50;
     levelNodes.forEach((d, i) => {
-      positions.set(d.node.node_id, {
+      positions.set(d.node.board_id, {
         x: startX + i * 100,
         y: cy + offset * levelGap,
       });
@@ -255,7 +256,7 @@ function drawFocusedGraph(
   const cellSize = (miniSize - 4) / 4;
 
   for (const d of displayNodes) {
-    const pos = positions.get(d.node.node_id)!;
+    const pos = positions.get(d.node.board_id)!;
     const { x, y } = pos;
     const isCur = d.label === "current";
 
@@ -328,7 +329,6 @@ export default function App() {
   const boardRef = useRef<HTMLCanvasElement>(null);
   const graphRef = useRef<HTMLCanvasElement>(null);
   const [state, setState] = useState<GameState | null>(null);
-  const [engine, setEngine] = useState<Engine | null>(null);
   const [config, setConfig] = useState<GameConfig>({
     rows: 4,
     cols: 4,
@@ -341,6 +341,15 @@ export default function App() {
     content: React.ReactNode;
   } | null>(null);
   const [lastMove, setLastMove] = useState<GraphDelta | null>(null);
+  const [activeTab, setActiveTab] = useState<"play" | "graph">("play");
+  const [visualizationGraph, setVisualizationGraph] =
+    useState<GraphData | null>(null);
+  const [visualizationGames, setVisualizationGames] = useState<GameInstance[]>(
+    [],
+  );
+  const [visualizationActiveGameId, setVisualizationActiveGameId] = useState<
+    string | undefined
+  >(undefined);
   const graphLayoutRef = useRef<{
     nodes: Map<string, { x: number; y: number }>;
     edges: {
@@ -353,11 +362,11 @@ export default function App() {
   useEffect(() => {
     if (!state) return;
     if (boardRef.current) drawBoard(boardRef.current, state);
-    if (graphRef.current && engine) {
-      const layout = drawFocusedGraph(graphRef.current, state, engine);
+    if (graphRef.current && graphData) {
+      const layout = drawFocusedGraph(graphRef.current, state, graphData);
       graphLayoutRef.current = layout;
     }
-  }, [state]);
+  }, [state, graphData]);
 
   const handleMove = async (dir: Direction) => {
     if (!state || state.game.is_terminated) return;
@@ -376,7 +385,6 @@ export default function App() {
     if (!state) return;
     exportGraph()
       .then((data) => {
-        setEngine(data);
         const payload = JSON.stringify({
           exportData: data,
           activeGameId: state.game.id,
@@ -395,8 +403,6 @@ export default function App() {
         try {
           const { exportData, activeGameId } = JSON.parse(saved);
           const result = await importGraph(JSON.stringify(exportData));
-          await exportGraph().then(setEngine);
-          console.log({ engine });
           setLastMove(null);
           setAllGames(result.games.map((g) => g.game));
           if (result.success && result.games.length > 0) {
@@ -621,6 +627,18 @@ export default function App() {
     }
   };
 
+  const openGraphVisualization = async () => {
+    try {
+      const snapshot = await exportGraph();
+      setVisualizationGraph(state?.graph ?? null);
+      setVisualizationGames(Object.values(snapshot.games));
+      setVisualizationActiveGameId(state?.game.id);
+      setActiveTab("graph");
+    } catch (e) {
+      console.error("graph visualization snapshot failed:", e);
+    }
+  };
+
   const isGameOver = state?.game.is_terminated ?? false;
 
   return (
@@ -648,6 +666,22 @@ export default function App() {
       <p style={{ color: "#9b8f82", fontSize: 14, margin: "0 0 24px" }}>
         Rust/WASM · Model-driven DAG · Phase 2
       </p>
+
+      <nav className="app-tabs" aria-label="Application views">
+        <button
+          className={activeTab === "play" ? "app-tab active" : "app-tab"}
+          onClick={() => setActiveTab("play")}
+        >
+          Play
+        </button>
+        <button
+          className={activeTab === "graph" ? "app-tab active" : "app-tab"}
+          onClick={openGraphVisualization}
+          disabled={!state}
+        >
+          Graph
+        </button>
+      </nav>
 
       <div
         style={{
@@ -685,259 +719,274 @@ export default function App() {
         ))}
       </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 32,
-          flexWrap: "wrap",
-          justifyContent: "center",
-          position: "relative",
-        }}
-      >
+      {activeTab === "graph" ? (
+        <GraphTab
+          graphData={visualizationGraph}
+          games={visualizationGames}
+          activeGameId={visualizationActiveGameId}
+        />
+      ) : (
         <div
           style={{
             display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 8,
+            gap: 32,
+            flexWrap: "wrap",
+            justifyContent: "center",
+            position: "relative",
           }}
         >
           <div
             style={{
               display: "flex",
-              justifyContent: "space-between",
-              width: 360,
+              flexDirection: "column",
               alignItems: "center",
+              gap: 8,
             }}
           >
-            <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>
-              Board
-            </span>
-            <span
+            <div
               style={{
-                background: "#bbada0",
-                color: "#f9f6f2",
-                fontWeight: 700,
-                padding: "4px 14px",
-                borderRadius: 4,
-                fontSize: 14,
+                display: "flex",
+                justifyContent: "space-between",
+                width: 360,
+                alignItems: "center",
               }}
             >
-              SCORE: {state?.game.score ?? 0}
-            </span>
-          </div>
-          <div style={{ position: "relative" }}>
-            <canvas
-              ref={boardRef}
-              width={360}
-              height={360}
-              style={{ borderRadius: 8, display: "block", touchAction: "none" }}
-              onTouchStart={onTouchStart}
-              onTouchMove={onTouchMove}
-              onTouchEnd={onTouchEnd}
-            />
-            {isGameOver && (
-              <div
+              <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>
+                Board
+              </span>
+              <span
                 style={{
-                  position: "absolute",
-                  top: 0,
-                  left: 0,
-                  width: "100%",
-                  height: "100%",
-                  borderRadius: 8,
-                  background: "rgba(0, 0, 0, 0.6)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  zIndex: 10,
+                  background: "#bbada0",
+                  color: "#f9f6f2",
+                  fontWeight: 700,
+                  padding: "4px 14px",
+                  borderRadius: 4,
+                  fontSize: 14,
                 }}
               >
+                SCORE: {state?.game.score ?? 0}
+              </span>
+            </div>
+            <div style={{ position: "relative" }}>
+              <canvas
+                ref={boardRef}
+                width={360}
+                height={360}
+                style={{
+                  borderRadius: 8,
+                  display: "block",
+                  touchAction: "none",
+                }}
+                onTouchStart={onTouchStart}
+                onTouchMove={onTouchMove}
+                onTouchEnd={onTouchEnd}
+              />
+              {isGameOver && (
                 <div
                   style={{
-                    background: "#f65e3b",
-                    color: "#f9f6f2",
-                    padding: "24px",
+                    position: "absolute",
+                    top: 0,
+                    left: 0,
+                    width: "100%",
+                    height: "100%",
                     borderRadius: 8,
-                    textAlign: "center",
-                    boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
+                    background: "rgba(0, 0, 0, 0.6)",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    zIndex: 10,
                   }}
                 >
                   <div
-                    style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}
-                  >
-                    Game Over!
-                  </div>
-                  <div style={{ fontSize: 14, opacity: 0.9, marginBottom: 12 }}>
-                    No more valid moves
-                  </div>
-                  <button
-                    onClick={() => startNewGame(config.rows, config.cols)}
                     style={{
-                      padding: "8px 16px",
-                      borderRadius: 4,
-                      border: "none",
-                      background: "#f9f6f2",
-                      color: "#f65e3b",
-                      fontSize: 12,
-                      fontWeight: 700,
-                      cursor: "pointer",
+                      background: "#f65e3b",
+                      color: "#f9f6f2",
+                      padding: "24px",
+                      borderRadius: 8,
+                      textAlign: "center",
+                      boxShadow: "0 4px 12px rgba(0, 0, 0, 0.3)",
                     }}
                   >
-                    New Game
-                  </button>
+                    <div
+                      style={{ fontSize: 24, fontWeight: 800, marginBottom: 8 }}
+                    >
+                      Game Over!
+                    </div>
+                    <div
+                      style={{ fontSize: 14, opacity: 0.9, marginBottom: 12 }}
+                    >
+                      No more valid moves
+                    </div>
+                    <button
+                      onClick={() => startNewGame(config.rows, config.cols)}
+                      style={{
+                        padding: "8px 16px",
+                        borderRadius: 4,
+                        border: "none",
+                        background: "#f9f6f2",
+                        color: "#f65e3b",
+                        fontSize: 12,
+                        fontWeight: 700,
+                        cursor: "pointer",
+                      }}
+                    >
+                      New Game
+                    </button>
+                  </div>
                 </div>
+              )}
+            </div>
+            <div
+              className="arrow-buttons"
+              style={{ display: "flex", gap: 8, marginTop: 8 }}
+            >
+              {["↑", "↓", "←", "→"].map((dir) => (
+                <button
+                  key={dir}
+                  disabled={isGameOver}
+                  onClick={() => {
+                    const dmap: Record<string, Direction> = {
+                      "↑": "Up",
+                      "↓": "Down",
+                      "←": "Left",
+                      "→": "Right",
+                    };
+                    handleMove(dmap[dir]);
+                  }}
+                  style={{
+                    width: 44,
+                    height: 44,
+                    borderRadius: 6,
+                    border: "none",
+                    background: "#bbada0",
+                    color: "#f9f6f2",
+                    fontSize: 18,
+                    fontWeight: 700,
+                    cursor: isGameOver ? "not-allowed" : "pointer",
+                    opacity: isGameOver ? 0.5 : 1,
+                  }}
+                >
+                  {dir}
+                </button>
+              ))}
+            </div>
+            {lastMove && (
+              <div
+                style={{
+                  marginTop: 8,
+                  padding: "4px 10px",
+                  borderRadius: 4,
+                  background:
+                    lastMove.nodes.length === 0 && lastMove.edges.length === 0
+                      ? "#f65e3b"
+                      : "#8f7a66",
+                  color: "#f9f6f2",
+                  fontSize: 12,
+                  fontWeight: 600,
+                }}
+              >
+                {lastMove.nodes.length === 0 && lastMove.edges.length === 0
+                  ? "Invalid move — no graph change"
+                  : `Valid move · +${lastMove.nodes.length} nodes · +${lastMove.edges.length} edges · +${lastMove.score_delta} score`}
               </div>
             )}
           </div>
-          <div
-            className="arrow-buttons"
-            style={{ display: "flex", gap: 8, marginTop: 8 }}
-          >
-            {["↑", "↓", "←", "→"].map((dir) => (
-              <button
-                key={dir}
-                disabled={isGameOver}
-                onClick={() => {
-                  const dmap: Record<string, Direction> = {
-                    "↑": "Up",
-                    "↓": "Down",
-                    "←": "Left",
-                    "→": "Right",
-                  };
-                  handleMove(dmap[dir]);
-                }}
-                style={{
-                  width: 44,
-                  height: 44,
-                  borderRadius: 6,
-                  border: "none",
-                  background: "#bbada0",
-                  color: "#f9f6f2",
-                  fontSize: 18,
-                  fontWeight: 700,
-                  cursor: isGameOver ? "not-allowed" : "pointer",
-                  opacity: isGameOver ? 0.5 : 1,
-                }}
-              >
-                {dir}
-              </button>
-            ))}
-          </div>
-          {lastMove && (
-            <div
-              style={{
-                marginTop: 8,
-                padding: "4px 10px",
-                borderRadius: 4,
-                background:
-                  lastMove.nodes.length === 0 && lastMove.edges.length === 0
-                    ? "#f65e3b"
-                    : "#8f7a66",
-                color: "#f9f6f2",
-                fontSize: 12,
-                fontWeight: 600,
-              }}
-            >
-              {lastMove.nodes.length === 0 && lastMove.edges.length === 0
-                ? "Invalid move — no graph change"
-                : `Valid move · +${lastMove.nodes.length} nodes · +${lastMove.edges.length} edges · +${lastMove.score_delta} score`}
-            </div>
-          )}
-        </div>
 
-        <div
-          style={{
-            display: "flex",
-            flexDirection: "column",
-            alignItems: "center",
-            gap: 8,
-          }}
-        >
           <div
+            className="local-graph-panel"
             style={{
               display: "flex",
-              justifyContent: "space-between",
-              width: 440,
+              flexDirection: "column",
               alignItems: "center",
+              gap: 8,
             }}
           >
-            <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>
-              Local Graph
-            </span>
-            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-              <select
-                value={state?.game.id ?? ""}
-                onChange={(e) => selectGame(e.target.value)}
-                style={{
-                  padding: "3px 8px",
-                  borderRadius: 4,
-                  border: "1px solid #bbada0",
-                  background: "#f9f6f2",
-                  color: "#776e65",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                {allGames.map((g) => (
-                  <option key={g.id} value={g.id}>
-                    {g.id.slice(0, 8)} · Score {g.score}{" "}
-                    {g.is_terminated ? "· Terminated" : ""}
-                  </option>
-                ))}
-              </select>
-              <span style={{ color: "#9b8f82", fontSize: 12 }}>
-                {state
-                  ? `${engine && engine.graph.nodes.length} nodes · ${engine && engine.graph.edges.length} edges`
-                  : "loading…"}
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                width: 440,
+                alignItems: "center",
+              }}
+            >
+              <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>
+                Local Graph
               </span>
-              <button
-                onClick={handleExport}
-                style={{
-                  padding: "3px 8px",
-                  borderRadius: 4,
-                  border: "none",
-                  background: "#8f7a66",
-                  color: "#f9f6f2",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                Export
-              </button>
-              <button
-                onClick={handleImport}
-                style={{
-                  padding: "3px 8px",
-                  borderRadius: 4,
-                  border: "none",
-                  background: "#8f7a66",
-                  color: "#f9f6f2",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  cursor: "pointer",
-                }}
-              >
-                Import
-              </button>
+              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                <select
+                  value={state?.game.id ?? ""}
+                  onChange={(e) => selectGame(e.target.value)}
+                  style={{
+                    padding: "3px 8px",
+                    borderRadius: 4,
+                    border: "1px solid #bbada0",
+                    background: "#f9f6f2",
+                    color: "#776e65",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  {allGames.map((g) => (
+                    <option key={g.id} value={g.id}>
+                      {g.id.slice(0, 8)} · Score {g.score}{" "}
+                      {g.is_terminated ? "· Terminated" : ""}
+                    </option>
+                  ))}
+                </select>
+                <span style={{ color: "#9b8f82", fontSize: 12 }}>
+                  {state
+                    ? `${graphData ? Object.keys(graphData.nodes).length : 0} nodes · ${graphData ? Object.keys(graphData.edges).length : 0} edges`
+                    : "loading…"}
+                </span>
+                <button
+                  onClick={handleExport}
+                  style={{
+                    padding: "3px 8px",
+                    borderRadius: 4,
+                    border: "none",
+                    background: "#8f7a66",
+                    color: "#f9f6f2",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Export
+                </button>
+                <button
+                  onClick={handleImport}
+                  style={{
+                    padding: "3px 8px",
+                    borderRadius: 4,
+                    border: "none",
+                    background: "#8f7a66",
+                    color: "#f9f6f2",
+                    fontSize: 11,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Import
+                </button>
+              </div>
             </div>
+            <canvas
+              ref={graphRef}
+              width={440}
+              height={360}
+              style={{
+                borderRadius: 8,
+                display: "block",
+                border: "2px solid #cdc1b4",
+                cursor: "crosshair",
+              }}
+              onMouseMove={onGraphMouseMove}
+              onMouseLeave={onGraphMouseLeave}
+            />
           </div>
-          <canvas
-            ref={graphRef}
-            width={440}
-            height={360}
-            style={{
-              borderRadius: 8,
-              display: "block",
-              border: "2px solid #cdc1b4",
-              cursor: "crosshair",
-            }}
-            onMouseMove={onGraphMouseMove}
-            onMouseLeave={onGraphMouseLeave}
-          />
         </div>
-      </div>
+      )}
 
       {hover && (
         <div
