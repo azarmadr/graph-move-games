@@ -8,12 +8,9 @@ import {
   importGraph,
   type GameState,
   type Direction,
-  type Node,
-  type Edge,
   type GameConfig,
   type GameInstance,
   type GraphDelta,
-  type Cell,
   type GraphData,
 } from "./wasmBridge";
 import GraphTab from "./GraphTab";
@@ -81,265 +78,14 @@ function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
   }
 }
 
-function isMoveKind(edge: Edge): { Move: { direction: Direction } } | null {
-  return edge.kind.Move
-    ? (edge.kind as { Move: { direction: Direction } })
-    : null;
-}
-
-function isSpawnKind(edge: Edge): { Spawn: { cells: Cell[] } } | null {
-  return edge.kind.Spawn ? (edge.kind as { Spawn: { cells: Cell[] } }) : null;
-}
-
-function drawFocusedGraph(
-  canvas: HTMLCanvasElement,
-  state: GameState,
-  graph: GraphData,
-): {
-  nodes: Map<string, { x: number; y: number }>;
-  edges: {
-    edge: Edge;
-    from: { x: number; y: number };
-    to: { x: number; y: number };
-  }[];
-} {
-  const ctx = canvas.getContext("2d")!;
-  const w = canvas.width;
-  const h = canvas.height;
-
-  ctx.fillStyle = "#1a1a2e";
-  ctx.fillRect(0, 0, w, h);
-
-  const { nodes, edges } = graph;
-  const currentId = state.game.current_board_id;
-  const findNode = (id: string) => nodes[id];
-
-  // Build a vertical chain: ancestor -> merge -> current
-  const current = findNode(currentId);
-  if (!current) {
-    ctx.fillStyle = "rgba(255,255,255,0.4)";
-    ctx.font = "12px monospace";
-    ctx.textAlign = "center";
-    ctx.fillText("No graph data yet", w / 2, h / 2);
-    return { nodes: new Map(), edges: [] };
-  }
-
-  type DisplayNode = {
-    node: Node;
-    label: string;
-    color: string;
-    yOffset: number;
-  };
-  const displayNodes: DisplayNode[] = [];
-
-  // Current node
-  displayNodes.push({
-    node: current,
-    label: "current",
-    color: "#4cc9f0",
-    yOffset: 1,
-  });
-
-  // Merge nodes: edges pointing to current with Spawn kind
-  const mergeIds = new Set<string>();
-  for (const id in edges) {
-    const e = edges[id];
-    if (e.to === currentId && isSpawnKind(e)) {
-      mergeIds.add(e.from);
-    }
-  }
-
-  for (const mid of mergeIds) {
-    const n = findNode(mid);
-    if (n)
-      displayNodes.push({
-        node: n,
-        label: "merge",
-        color: "#f72585",
-        yOffset: 0,
-      });
-  }
-
-  // Ancestor nodes: edges pointing to merge nodes with Move kind
-  const ancestorIds = new Set<string>();
-  for (const mid of mergeIds) {
-    for (const id in edges) {
-      const e = edges[id];
-      if (e.to === mid && isMoveKind(e)) {
-        ancestorIds.add(e.from);
-      }
-    }
-  }
-  for (const aid of ancestorIds) {
-    const n = findNode(aid);
-    if (n)
-      displayNodes.push({
-        node: n,
-        label: "before",
-        color: "#a3a3a3",
-        yOffset: -1,
-      });
-  }
-
-  // Position nodes: y based on yOffset, x centered with spread
-  const positions = new Map<string, { x: number; y: number }>();
-  const cx = w / 2;
-  const cy = h / 2 + 12;
-  const levelGap = 90;
-
-  const byLevel = (offset: number) =>
-    displayNodes.filter((d) => d.yOffset === offset);
-  for (const offset of [-1, 0, 1]) {
-    const levelNodes = byLevel(offset);
-    if (levelNodes.length === 0) continue;
-    const startX = cx - (levelNodes.length - 1) * 50;
-    levelNodes.forEach((d, i) => {
-      positions.set(d.node.board_id, {
-        x: startX + i * 100,
-        y: cy + offset * levelGap,
-      });
-    });
-  }
-
-  const drawEdge = (
-    fromId: string,
-    toId: string,
-    label: string,
-    color: string,
-  ) => {
-    const a = positions.get(fromId);
-    const b = positions.get(toId);
-    if (!a || !b) return;
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
-    ctx.stroke();
-
-    const mx = (a.x + b.x) / 2;
-    const my = (a.y + b.y) / 2;
-    const tw = ctx.measureText(label).width + 8;
-    ctx.fillStyle = "#1a1a2e";
-    ctx.fillRect(mx - tw / 2, my - 7, tw, 14);
-    ctx.fillStyle = color;
-    ctx.font = "10px monospace";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(label, mx, my);
-  };
-
-  // Draw edges between displayed nodes
-  const drawnEdges: {
-    edge: Edge;
-    from: { x: number; y: number };
-    to: { x: number; y: number };
-  }[] = [];
-  for (const id in edges) {
-    const e = edges[id];
-    if (!positions.has(e.from) || !positions.has(e.to)) continue;
-    const from = positions.get(e.from)!;
-    const to = positions.get(e.to)!;
-    const move = isMoveKind(e);
-    const spawn = isSpawnKind(e);
-    if (move) {
-      drawEdge(e.from, e.to, move.Move.direction.toLowerCase(), "#4cc9f0");
-      drawnEdges.push({ edge: e, from, to });
-    } else if (spawn) {
-      drawEdge(e.from, e.to, "spawn", "#f72585");
-      drawnEdges.push({ edge: e, from, to });
-    }
-  }
-
-  // Draw nodes
-  const miniSize = 44;
-  const cellSize = (miniSize - 4) / 4;
-
-  for (const d of displayNodes) {
-    const pos = positions.get(d.node.board_id)!;
-    const { x, y } = pos;
-    const isCur = d.label === "current";
-
-    const [mRows, mCols] = d.node.board.dim;
-    const grid: number[][] = Array.from({ length: mRows }, () =>
-      Array(mCols).fill(0),
-    );
-    for (const cell of d.node.board.tiles) {
-      grid[cell.pos.r][cell.pos.c] = cell.tile;
-    }
-
-    if (isCur) {
-      ctx.save();
-      ctx.shadowColor = d.color;
-      ctx.shadowBlur = 18;
-      ctx.strokeStyle = d.color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      ctx.roundRect(x - miniSize / 2, y - miniSize / 2, miniSize, miniSize, 4);
-      ctx.stroke();
-      ctx.restore();
-    }
-
-    ctx.fillStyle = isCur ? "#2a2a45" : "#1e1e30";
-    ctx.strokeStyle = isCur ? d.color : "rgba(255,255,255,0.15)";
-    ctx.lineWidth = isCur ? 2 : 1;
-    ctx.beginPath();
-    ctx.roundRect(x - miniSize / 2, y - miniSize / 2, miniSize, miniSize, 4);
-    ctx.fill();
-    ctx.stroke();
-
-    for (let r = 0; r < mRows; r++) {
-      for (let c = 0; c < mCols; c++) {
-        const val = grid[r][c];
-        const colors = TILE_COLORS[val] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
-        const tx = x - miniSize / 2 + 2 + c * (cellSize + 1);
-        const ty = y - miniSize / 2 + 2 + r * (cellSize + 1);
-        ctx.fillStyle = colors.bg;
-        ctx.fillRect(tx, ty, cellSize, cellSize);
-        if (val > 0 && val >= 8) {
-          ctx.fillStyle = colors.fg;
-          ctx.font = `bold ${cellSize > 10 ? 7 : 6}px sans-serif`;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "middle";
-          ctx.fillText(String(val), tx + cellSize / 2, ty + cellSize / 2);
-        }
-      }
-    }
-
-    ctx.fillStyle = isCur ? d.color : "rgba(255,255,255,0.45)";
-    ctx.font = "10px monospace";
-    ctx.textAlign = "center";
-    ctx.fillText(d.label, x, y + miniSize / 2 + 14);
-  }
-
-  // Legend
-  ctx.fillStyle = "rgba(255,255,255,0.35)";
-  ctx.font = "11px monospace";
-  ctx.textAlign = "left";
-  ctx.fillText(
-    `Game ${state.game.id} · Node ${currentId} · Score ${state.game.score} · ${state.game.is_terminated ? "Terminated" : "Active"}`,
-    12,
-    h - 12,
-  );
-
-  return { nodes: positions, edges: drawnEdges };
-}
-
 export default function App() {
   const boardRef = useRef<HTMLCanvasElement>(null);
-  const graphRef = useRef<HTMLCanvasElement>(null);
   const [state, setState] = useState<GameState | null>(null);
   const [config, setConfig] = useState<GameConfig>({
     rows: 4,
     cols: 4,
     spawn_config: { spawns: { 2: 9, 4: 1 } },
   });
-  const [allGames, setAllGames] = useState<GameInstance[]>([]);
-  const [hover, setHover] = useState<{
-    x: number;
-    y: number;
-    content: React.ReactNode;
-  } | null>(null);
   const [lastMove, setLastMove] = useState<GraphDelta | null>(null);
   const [activeTab, setActiveTab] = useState<"play" | "graph">("play");
   const [visualizationGraph, setVisualizationGraph] =
@@ -350,23 +96,10 @@ export default function App() {
   const [visualizationActiveGameId, setVisualizationActiveGameId] = useState<
     string | undefined
   >(undefined);
-  const graphLayoutRef = useRef<{
-    nodes: Map<string, { x: number; y: number }>;
-    edges: {
-      edge: Edge;
-      from: { x: number; y: number };
-      to: { x: number; y: number };
-    }[];
-  } | null>(null);
-
   useEffect(() => {
     if (!state) return;
     if (boardRef.current) drawBoard(boardRef.current, state);
-    if (graphRef.current && graphData) {
-      const layout = drawFocusedGraph(graphRef.current, state, graphData);
-      graphLayoutRef.current = layout;
-    }
-  }, [state, graphData]);
+  }, [state]);
 
   const handleMove = async (dir: Direction) => {
     if (!state || state.game.is_terminated) return;
@@ -390,7 +123,6 @@ export default function App() {
           activeGameId: state.game.id,
         });
         localStorage.setItem(STORAGE_KEY, payload);
-        setAllGames(Object.values(data.games));
       })
       .catch((e) => console.error("autosave failed:", e));
   }, [state]);
@@ -404,7 +136,6 @@ export default function App() {
           const { exportData, activeGameId } = JSON.parse(saved);
           const result = await importGraph(JSON.stringify(exportData));
           setLastMove(null);
-          setAllGames(result.games.map((g) => g.game));
           if (result.success && result.games.length > 0) {
             const restored = await getState(activeGameId as string);
             setState(restored);
@@ -419,7 +150,6 @@ export default function App() {
       console.trace("Saved games", { s });
       setLastMove(null);
       setState(s);
-      setAllGames((prev) => [...prev, s.game]);
     });
   }, []);
 
@@ -484,147 +214,6 @@ export default function App() {
     const s = await createGameWithConfig(newConfig);
     setLastMove(null);
     setState(s);
-    setAllGames((prev) => [...prev, s.game]);
-  };
-
-  const selectGame = async (gameId: string) => {
-    const s = await getState(gameId);
-    setLastMove(null);
-    setState(s);
-  };
-
-  const findNodeAt = (
-    x: number,
-    y: number,
-  ): { content: React.ReactNode } | null => {
-    const layout = graphLayoutRef.current;
-    if (!layout) return null;
-    const half = 22;
-    for (const [nodeId, pos] of layout.nodes.entries()) {
-      if (Math.abs(pos.x - x) <= half && Math.abs(pos.y - y) <= half) {
-        const node = state?.graph.nodes[nodeId];
-        if (!node) continue;
-        const tiles = node.board.tiles
-          .map((c) => `${c.tile} @ ${c.pos.r},${c.pos.c}`)
-          .join("; ");
-        return {
-          content: (
-            <div>
-              <strong>Node {nodeId.slice(0, 12)}</strong>
-              <div style={{ marginTop: 4, opacity: 0.85 }}>
-                {tiles || "empty board"}
-              </div>
-            </div>
-          ),
-        };
-      }
-    }
-    return null;
-  };
-
-  const distToSegment = (
-    px: number,
-    py: number,
-    ax: number,
-    ay: number,
-    bx: number,
-    by: number,
-  ) => {
-    const dx = bx - ax;
-    const dy = by - ay;
-    const len2 = dx * dx + dy * dy;
-    const t =
-      len2 === 0
-        ? 0
-        : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len2));
-    const projX = ax + t * dx;
-    const projY = ay + t * dy;
-    return Math.hypot(px - projX, py - projY);
-  };
-
-  const findEdgeAt = (
-    x: number,
-    y: number,
-  ): { content: React.ReactNode } | null => {
-    const layout = graphLayoutRef.current;
-    if (!layout) return null;
-    const threshold = 6;
-    for (const id in layout.edges) {
-      const { edge, from, to } = layout.edges[id];
-      if (distToSegment(x, y, from.x, from.y, to.x, to.y) < threshold) {
-        const move = isMoveKind(edge);
-        const spawn = isSpawnKind(edge);
-        if (move) {
-          return {
-            content: (
-              <div>
-                <strong>Move</strong>
-                <div style={{ marginTop: 4, opacity: 0.85 }}>
-                  {move.Move.direction}
-                </div>
-              </div>
-            ),
-          };
-        } else if (spawn) {
-          const cells = spawn.Spawn.cells
-            .map((c) => `${c.tile} @ ${c.pos.r},${c.pos.c}`)
-            .join("; ");
-          return {
-            content: (
-              <div>
-                <strong>Spawn</strong>
-                <div style={{ marginTop: 4, opacity: 0.85 }}>{cells}</div>
-              </div>
-            ),
-          };
-        }
-      }
-    }
-    return null;
-  };
-
-  const onGraphMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const canvas = graphRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    const hit = findNodeAt(x, y) || findEdgeAt(x, y);
-    if (hit) {
-      setHover({ x: e.clientX + 12, y: e.clientY + 12, content: hit.content });
-    } else {
-      setHover(null);
-    }
-  };
-
-  const onGraphMouseLeave = () => setHover(null);
-
-  const handleExport = async () => {
-    try {
-      const data = await exportGraph();
-      const json = JSON.stringify(data, null, 2);
-      await navigator.clipboard.writeText(json);
-      alert("Graph exported to clipboard!");
-    } catch (e) {
-      console.error("export failed:", e);
-      alert("Export failed — see console.");
-    }
-  };
-
-  const handleImport = async () => {
-    try {
-      const text = await navigator.clipboard.readText();
-      const result = await importGraph(text);
-      setLastMove(null);
-      setAllGames(result.games.map((g) => g.game));
-      if (result.success && result.games.length > 0) {
-        setState(result.games[0]);
-      }
-      alert(`Imported ${result.games.length} game(s).`);
-    } catch (e) {
-      console.error("import failed:", e);
-      alert("Import failed — see console.");
-    }
   };
 
   const openGraphVisualization = async () => {
@@ -891,121 +480,6 @@ export default function App() {
               </div>
             )}
           </div>
-
-          <div
-            className="local-graph-panel"
-            style={{
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              gap: 8,
-            }}
-          >
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                width: 440,
-                alignItems: "center",
-              }}
-            >
-              <span style={{ color: "#776e65", fontWeight: 700, fontSize: 15 }}>
-                Local Graph
-              </span>
-              <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <select
-                  value={state?.game.id ?? ""}
-                  onChange={(e) => selectGame(e.target.value)}
-                  style={{
-                    padding: "3px 8px",
-                    borderRadius: 4,
-                    border: "1px solid #bbada0",
-                    background: "#f9f6f2",
-                    color: "#776e65",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  {allGames.map((g) => (
-                    <option key={g.id} value={g.id}>
-                      {g.id.slice(0, 8)} · Score {g.score}{" "}
-                      {g.is_terminated ? "· Terminated" : ""}
-                    </option>
-                  ))}
-                </select>
-                <span style={{ color: "#9b8f82", fontSize: 12 }}>
-                  {state
-                    ? `${graphData ? Object.keys(graphData.nodes).length : 0} nodes · ${graphData ? Object.keys(graphData.edges).length : 0} edges`
-                    : "loading…"}
-                </span>
-                <button
-                  onClick={handleExport}
-                  style={{
-                    padding: "3px 8px",
-                    borderRadius: 4,
-                    border: "none",
-                    background: "#8f7a66",
-                    color: "#f9f6f2",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  Export
-                </button>
-                <button
-                  onClick={handleImport}
-                  style={{
-                    padding: "3px 8px",
-                    borderRadius: 4,
-                    border: "none",
-                    background: "#8f7a66",
-                    color: "#f9f6f2",
-                    fontSize: 11,
-                    fontWeight: 700,
-                    cursor: "pointer",
-                  }}
-                >
-                  Import
-                </button>
-              </div>
-            </div>
-            <canvas
-              ref={graphRef}
-              width={440}
-              height={360}
-              style={{
-                borderRadius: 8,
-                display: "block",
-                border: "2px solid #cdc1b4",
-                cursor: "crosshair",
-              }}
-              onMouseMove={onGraphMouseMove}
-              onMouseLeave={onGraphMouseLeave}
-            />
-          </div>
-        </div>
-      )}
-
-      {hover && (
-        <div
-          style={{
-            position: "fixed",
-            left: hover.x,
-            top: hover.y,
-            zIndex: 1000,
-            pointerEvents: "none",
-            background: "rgba(26, 26, 46, 0.95)",
-            color: "#f9f6f2",
-            padding: "8px 10px",
-            borderRadius: 4,
-            fontSize: 12,
-            maxWidth: 220,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.25)",
-          }}
-        >
-          {hover.content}
         </div>
       )}
 
