@@ -32,7 +32,7 @@ impl Engine {
         let cols = config.cols;
 
         let start_board = Board::with_tiles(rows, cols, vec![Cell::new(0, 0, 2)]);
-        self.create_game_with_board_inner(game_id, start_board)
+        self.create_game_with_board_inner(game_id, start_board, config.clone())
     }
 
     /// Create a game instance with a custom board. Useful for testing edge cases
@@ -40,13 +40,23 @@ impl Engine {
     pub fn _create_game_with_board(&mut self, board: Board) -> Result<GameState, String> {
         let game_id = GameId::from_nonce(self.next_game_nonce);
         self.next_game_nonce += 1;
-        self.create_game_with_board_inner(game_id, board)
+        let (rows, cols) = board.dim;
+        self.create_game_with_board_inner(
+            game_id,
+            board,
+            GameConfig {
+                rows,
+                cols,
+                spawn_config: SpawnConfig::default(),
+            },
+        )
     }
 
     fn create_game_with_board_inner(
         &mut self,
         game_id: GameId,
         board: Board,
+        config: GameConfig,
     ) -> Result<GameState, String> {
         let (start_board_id, _) = self.graph.get_or_create_node(board.clone());
         let is_terminated = !has_any_valid_move_helper(&board);
@@ -57,11 +67,7 @@ impl Engine {
             current_board_id: start_board_id,
             score: 0,
             is_terminated,
-            config: GameConfig {
-                rows: board.dim.0,
-                cols: board.dim.1,
-                spawn_config: SpawnConfig::default(),
-            },
+            config,
         };
 
         self.games.insert(game_id, game.clone());
@@ -111,7 +117,7 @@ impl Engine {
         let (merge_board_id, merge_created) = self.graph.get_or_create_node(merged_board.clone());
 
         // Step 4/5: spawn
-        let spawn_cells = sample_spawn(&merged_board, &game.config.spawn_config);
+        let spawn_cells = sample_spawn(&merged_board, &game.config.spawn_config)?;
         let spawned_board = spawn_cells.iter().fold(merged_board.clone(), |b, cell| {
             b.set(cell.pos.r, cell.pos.c, cell.tile)
         });
@@ -308,14 +314,27 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(
-            first_move.game_state.game.current_board_id,
-            second_move.game_state.game.current_board_id
-        );
-        assert_eq!(engine.graph.graph.node_count(), 3);
-        assert_eq!(engine.graph.graph.edge_count(), 2);
+        // The deterministic merge step converges, so the Move edge is shared.
+        // Spawn outcomes are intentionally random and may diverge.
         assert_eq!(first_move.delta.edges.len(), 2);
-        assert!(second_move.delta.edges.is_empty());
+        assert!(
+            second_move
+                .delta
+                .edges
+                .iter()
+                .all(|edge| !matches!(edge.kind, Edge::Move(_)))
+        );
+        assert_eq!(
+            engine
+                .graph
+                .graph
+                .edge_references()
+                .filter(|edge| matches!(edge.weight(), Edge::Move(_)))
+                .count(),
+            1
+        );
+        assert!(engine.graph.graph.node_count() >= 3);
+        assert!(engine.graph.graph.edge_count() >= 3);
     }
 
     #[test]
