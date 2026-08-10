@@ -1,5 +1,4 @@
 import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
 import path from "node:path";
 
 const rawPort = process.env.PORT;
@@ -22,12 +21,10 @@ if (!basePath) {
 
 export default defineConfig({
   base: basePath,
-  plugins: [react()],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),
     },
-    dedupe: ["react", "react-dom"],
   },
   root: path.resolve(import.meta.dirname),
   build: {
