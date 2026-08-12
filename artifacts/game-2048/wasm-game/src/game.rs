@@ -75,7 +75,6 @@ impl Engine {
         Ok(GameState {
             game,
             active_board: board,
-            graph: self.graph.graph_data(),
         })
     }
 
@@ -83,12 +82,16 @@ impl Engine {
     ///
     /// model.md transition logic:
     /// current -> merged -> spawned (two edges: Move, then Spawn).
-    pub fn make_move(&mut self, req: MoveRequest) -> Result<MoveResponse, String> {
+    pub fn make_move(
+        &mut self,
+        game_id: GameId,
+        direction: Direction,
+    ) -> Result<GameState, String> {
         let mut game = self
             .games
-            .get_mut(&req.game_id)
+            .get_mut(&game_id)
             .cloned()
-            .ok_or_else(|| format!("game {} not found", req.game_id))?;
+            .ok_or_else(|| format!("game {} not found", game_id))?;
 
         let current_board = self
             .graph
@@ -98,86 +101,46 @@ impl Engine {
 
         // Case 1: already terminated
         if game.is_terminated {
-            return Ok(MoveResponse {
-                game_state: self.build_state(game.clone()),
-                delta: GraphDelta::empty(true, game.current_board_id),
-            });
+            return Ok(self.build_state(game));
         }
 
         // Case 2/3: resolve merge
-        let (merged_board, merge_score, valid) = resolve_move(&current_board, req.direction);
+        let (merged_board, merge_score, valid) = resolve_move(&current_board, direction);
         if !valid {
-            return Ok(MoveResponse {
-                game_state: self.build_state(game.clone()),
-                delta: GraphDelta::empty(false, game.current_board_id),
-            });
+            return Ok(self.build_state(game));
         }
 
         // Step 3: merged node
-        let (merge_board_id, merge_created) = self.graph.get_or_create_node(merged_board.clone());
+        let (merge_board_id, _) = self.graph.get_or_create_node(current_board.clone());
 
         // Step 4/5: spawn
         let spawn_cells = sample_spawn(&merged_board, &game.config.spawn_config)?;
         let spawned_board = spawn_cells.iter().fold(merged_board.clone(), |b, cell| {
             b.set(cell.pos.r, cell.pos.c, cell.tile)
         });
-        let (spawn_board_id, spawn_created) = self.graph.get_or_create_node(spawned_board.clone());
+        let (spawn_board_id, _) = self.graph.get_or_create_node(spawned_board.clone());
+
+        // Step 6: edges
+        self.graph
+            .insert_edge(game.current_board_id, merge_board_id, Edge::Move(direction));
+        self.graph
+            .insert_edge(merge_board_id, spawn_board_id, Edge::Spawn(spawn_cells));
 
         // Step 7: termination check
         let is_terminated = !has_any_valid_move_helper(&spawned_board);
 
         // Step 8: update game instance
         game.score += merge_score as u64;
-
-        // Step 9: build delta
-        let mut delta_nodes = Vec::new();
-        if merge_created {
-            if let Some(node) = self.graph.node_data(merge_board_id) {
-                delta_nodes.push(node);
-            }
-        }
-        if spawn_created {
-            if let Some(node) = self.graph.node_data(spawn_board_id) {
-                delta_nodes.push(node);
-            }
-        }
-
-        let move_edge = Edge::Move(req.direction);
-        let spawn_edge = Edge::Spawn(spawn_cells);
-        let (move_edge_id, move_edge_created) =
-            self.graph
-                .insert_edge(game.current_board_id, merge_board_id, move_edge);
-        let (spawn_edge_id, spawn_edge_created) =
-            self.graph
-                .insert_edge(merge_board_id, spawn_board_id, spawn_edge);
-
         game.current_board_id = spawn_board_id;
         game.is_terminated = is_terminated;
-        self.games.insert(req.game_id, game.clone());
-        let graph = self.graph.graph_data();
-        let mut delta_edges = Vec::new();
-        if move_edge_created {
-            if let Some(edge) = graph.edges.get(&move_edge_id) {
-                delta_edges.push(edge.clone());
-            }
-        }
-        if spawn_edge_created {
-            if let Some(edge) = graph.edges.get(&spawn_edge_id) {
-                delta_edges.push(edge.clone());
-            }
-        }
-        let delta = GraphDelta {
-            is_terminated,
-            nodes: delta_nodes,
-            edges: delta_edges,
-            current_board_id: spawn_board_id,
-            score_delta: merge_score as u64,
-        };
+        self.games.insert(game_id, game.clone());
 
-        Ok(MoveResponse {
-            game_state: self.build_state(game),
-            delta,
-        })
+        Ok(self.build_state(game))
+    }
+
+    /// Snapshot of the canonical graph, for the visualization tab.
+    pub fn get_graph(&self) -> GraphData {
+        self.graph.graph_data()
     }
 
     pub fn get_state(&self, game_id: GameId) -> Result<GameState, String> {
@@ -218,7 +181,6 @@ impl Engine {
         GameState {
             game,
             active_board: board,
-            graph: self.graph.graph_data(),
         }
     }
 }
@@ -243,8 +205,9 @@ mod tests {
     fn test_create_game_initial_state() {
         let mut engine = Engine::new();
         let state = engine.create_game(&GameConfig::default()).unwrap();
-        assert_eq!(state.graph.nodes.len(), 1);
-        assert_eq!(state.graph.edges.len(), 0);
+        let graph = engine.get_graph();
+        assert_eq!(graph.nodes.len(), 1);
+        assert_eq!(graph.edges.len(), 0);
         assert_eq!(state.game.source_board_id, state.game.current_board_id);
         assert_eq!(state.game.score, 0);
         assert!(!state.game.is_terminated);
@@ -258,32 +221,25 @@ mod tests {
 
         // Board: single tile at (0,0). Move Left is invalid (no change).
         // Move Right is also invalid in this case because the tile is at the right edge? Wait, (0,0) is left edge. Move Right shifts to (0,1). Valid.
-        let resp = engine
-            .make_move(MoveRequest {
-                game_id: state.game.id,
-                direction: Direction::Right,
-            })
-            .unwrap();
+        let new_state = engine.make_move(state.game.id, Direction::Right).unwrap();
+        let graph = engine.get_graph();
 
-        let new_state = resp.game_state;
         let new_current = new_state.game.current_board_id;
         assert_ne!(new_current, current_id);
-        assert_eq!(new_state.graph.nodes.len(), 3); // start, merged, spawned
-        assert_eq!(new_state.graph.edges.len(), 2); // move and spawn
+        assert_eq!(graph.nodes.len(), 3); // start, merged, spawned
+        assert_eq!(graph.edges.len(), 2); // move and spawn
         assert_eq!(new_state.game.score, 0); // no merge yet
         assert!(!new_state.game.is_terminated);
 
         // Verify edge chain: current -> merge -> spawned
-        let move_edge = new_state
-            .graph
+        let move_edge = graph
             .edges
             .values()
             .find(|e| matches!(e.kind, Edge::Move(Direction::Right)))
             .unwrap();
         assert_eq!(move_edge.from, current_id);
 
-        let spawn_edge = new_state
-            .graph
+        let spawn_edge = graph
             .edges
             .values()
             .find(|e| matches!(e.kind, Edge::Spawn { .. }))
@@ -301,28 +257,18 @@ mod tests {
         assert_eq!(first.game.source_board_id, second.game.source_board_id);
         assert_eq!(engine.graph.graph.node_count(), 1);
 
-        let first_move = engine
-            .make_move(MoveRequest {
-                game_id: first.game.id,
-                direction: Direction::Right,
-            })
-            .unwrap();
-        let second_move = engine
-            .make_move(MoveRequest {
-                game_id: second.game.id,
-                direction: Direction::Right,
-            })
-            .unwrap();
+        let first_move = engine.make_move(first.game.id, Direction::Right).unwrap();
+        let second_move = engine.make_move(second.game.id, Direction::Right).unwrap();
 
         // The deterministic merge step converges, so the Move edge is shared.
         // Spawn outcomes are intentionally random and may diverge.
-        assert_eq!(first_move.delta.edges.len(), 2);
-        assert!(
-            second_move
-                .delta
-                .edges
-                .iter()
-                .all(|edge| !matches!(edge.kind, Edge::Move(_)))
+        assert_ne!(
+            first_move.game.current_board_id,
+            first.game.current_board_id
+        );
+        assert_ne!(
+            second_move.game.current_board_id,
+            second.game.current_board_id
         );
         assert_eq!(
             engine
@@ -344,17 +290,12 @@ mod tests {
         let current_id = state.game.current_board_id;
 
         // Move Left from (0,0) is invalid because the tile is already at the left edge.
-        let resp = engine
-            .make_move(MoveRequest {
-                game_id: state.game.id,
-                direction: Direction::Left,
-            })
-            .unwrap();
+        let resp = engine.make_move(state.game.id, Direction::Left).unwrap();
 
-        assert_eq!(resp.game_state.game.current_board_id, current_id);
-        assert_eq!(resp.delta.nodes.len(), 0);
-        assert_eq!(resp.delta.edges.len(), 0);
-        assert_eq!(resp.delta.score_delta, 0);
+        assert_eq!(resp.game.current_board_id, current_id);
+        assert_eq!(engine.get_graph().nodes.len(), 1);
+        assert_eq!(engine.get_graph().edges.len(), 0);
+        assert_eq!(resp.game.score, 0);
     }
 
     #[test]
@@ -364,12 +305,7 @@ mod tests {
         let game_id = state.game.id;
 
         // Make a move so we have some graph structure
-        engine
-            .make_move(MoveRequest {
-                game_id,
-                direction: Direction::Right,
-            })
-            .unwrap();
+        engine.make_move(game_id, Direction::Right).unwrap();
 
         let export = serde_json::to_string(&engine).unwrap();
         let mut engine2 = Engine::new();
@@ -380,8 +316,8 @@ mod tests {
         assert_eq!(result.games.len(), 1);
         let imported_state = engine2.get_state(game_id).unwrap();
         assert_eq!(imported_state.game.score, 0);
-        assert_eq!(imported_state.graph.nodes.len(), 3);
-        assert_eq!(imported_state.graph.edges.len(), 2);
+        assert_eq!(engine2.get_graph().nodes.len(), 3);
+        assert_eq!(engine2.get_graph().edges.len(), 2);
     }
 
     #[test]
@@ -411,8 +347,8 @@ mod tests {
             state.game.is_terminated,
             "game-over board should be terminated"
         );
-        assert_eq!(state.graph.nodes.len(), 1);
-        assert_eq!(state.graph.edges.len(), 0);
+        assert_eq!(engine.get_graph().nodes.len(), 1);
+        assert_eq!(engine.get_graph().edges.len(), 0);
     }
 
     #[test]
@@ -436,8 +372,8 @@ mod tests {
         );
         let state = engine._create_game_with_board(board).unwrap();
         let game_id = state.game.id;
-        let initial_node_count = state.graph.nodes.len();
-        let initial_edge_count = state.graph.edges.len();
+        let initial_node_count = engine.get_graph().nodes.len();
+        let initial_edge_count = engine.get_graph().edges.len();
         let initial_score = state.game.score;
         let initial_current = state.game.current_board_id;
 
@@ -447,29 +383,23 @@ mod tests {
             Direction::Left,
             Direction::Right,
         ] {
-            let resp = engine
-                .make_move(MoveRequest {
-                    game_id,
-                    direction: dir,
-                })
-                .unwrap();
-            assert!(
-                resp.delta.nodes.is_empty(),
+            let resp = engine.make_move(game_id, dir).unwrap();
+            assert_eq!(
+                engine.get_graph().nodes.len(),
+                initial_node_count,
                 "{dir:?} created nodes on a terminated game"
             );
-            assert!(
-                resp.delta.edges.is_empty(),
+            assert_eq!(
+                engine.get_graph().edges.len(),
+                initial_edge_count,
                 "{dir:?} created edges on a terminated game"
             );
             assert_eq!(
-                resp.delta.score_delta, 0,
+                resp.game.score, initial_score,
                 "{dir:?} changed score on a terminated game"
             );
-            assert_eq!(resp.game_state.graph.nodes.len(), initial_node_count);
-            assert_eq!(resp.game_state.graph.edges.len(), initial_edge_count);
-            assert_eq!(resp.game_state.game.score, initial_score);
-            assert_eq!(resp.game_state.game.current_board_id, initial_current);
-            assert!(resp.game_state.game.is_terminated);
+            assert_eq!(resp.game.current_board_id, initial_current);
+            assert!(resp.game.is_terminated);
         }
     }
 
@@ -499,23 +429,15 @@ mod tests {
             "pre-move board should not be terminated"
         );
 
-        let resp = engine
-            .make_move(MoveRequest {
-                game_id: state.game.id,
-                direction: Direction::Right,
-            })
-            .unwrap();
+        let resp = engine.make_move(state.game.id, Direction::Right).unwrap();
 
+        assert!(resp.game.is_terminated, "spawned board should be game-over");
         assert!(
-            resp.game_state.game.is_terminated,
-            "spawned board should be game-over"
-        );
-        assert!(
-            !resp.delta.nodes.is_empty(),
+            engine.get_graph().nodes.len() >= 3,
             "valid move should create nodes"
         );
         assert_eq!(
-            resp.delta.edges.len(),
+            engine.get_graph().edges.len(),
             2,
             "valid move should create one move + one spawn edge"
         );

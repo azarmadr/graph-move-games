@@ -74,10 +74,6 @@ impl GraphStore {
             .and_then(|index| self.graph.node_weight(*index))
     }
 
-    pub fn node_data(&self, board_id: BoardId) -> Option<Board> {
-        self.get_node(board_id).cloned()
-    }
-
     pub fn insert_edge(&mut self, from: BoardId, to: BoardId, edge: Edge) -> (EdgeId, bool) {
         let edge_id = EdgeId::from_content(from, to, &edge);
         if self.edge_ids.contains_key(&edge_id) {

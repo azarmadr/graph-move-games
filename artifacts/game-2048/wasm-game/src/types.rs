@@ -237,27 +237,6 @@ pub struct GraphData {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphDelta {
-    pub is_terminated: bool,
-    pub nodes: Vec<Board>,
-    pub edges: Vec<GraphEdge>,
-    pub current_board_id: BoardId,
-    pub score_delta: u64,
-}
-
-impl GraphDelta {
-    pub fn empty(terminated: bool, current_board_id: BoardId) -> Self {
-        Self {
-            is_terminated: terminated,
-            nodes: Vec::new(),
-            edges: Vec::new(),
-            current_board_id,
-            score_delta: 0,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GameInstance {
     pub id: GameId,
     pub source_board_id: BoardId,
@@ -271,19 +250,6 @@ pub struct GameInstance {
 pub struct GameState {
     pub game: GameInstance,
     pub active_board: Board,
-    pub graph: GraphData,
-}
-
-#[derive(Debug, Clone, Copy, Deserialize)]
-pub struct MoveRequest {
-    pub game_id: GameId,
-    pub direction: Direction,
-}
-
-#[derive(Debug, Serialize)]
-pub struct MoveResponse {
-    pub game_state: GameState,
-    pub delta: GraphDelta,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

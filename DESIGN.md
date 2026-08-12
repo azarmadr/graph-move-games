@@ -66,45 +66,51 @@ Real data flowing from Rust→WASM→JSON→JS. No mocks—everything is `GameSt
 // Sparse board representation
 interface Pos { r: number; c: number }
 interface Cell { pos: Pos; tile: number }
-interface Board { dim: [rows, cols]; tiles: Cell[] }
+interface Board { dim: [number, number]; tiles: Cell[] }
+type Direction = "Up" | "Down" | "Left" | "Right"
 
-// DAG nodes: each represents a unique board state
-type NodeKind = "Source" | "Regular" | { Sink: { game_id: number; status } }
-interface Node {
-  node_id: number
-  board: Board
-  kind: NodeKind
-}
+// Content-addressed IDs (serialized as strings over the bridge)
+type BoardId = string
+type EdgeId = string
 
-// DAG edges: moves and spawns
-type EdgeType = { Move: { direction: Direction } } | { Spawn: { cells: Cell[] } }
+// DAG edges: atomic transitions (moves and spawns)
+interface EdgeKind { Move?: Direction; Spawn?: Cell[] }
 interface Edge {
-  edge_id: number
-  from: number
-  to: number
-  edge_type: EdgeType
+  from: BoardId
+  to: BoardId
+  kind: EdgeKind
 }
 
-// Game cursor: which node the player is viewing
-interface GameCursor {
-  game_id: number
-  sink_id: number      // current node
-  status: "Active" | "Terminated"
+// Graph snapshot — fetched on demand for the visualization tab
+interface GraphData {
+  nodes: { [key: BoardId]: Board }
+  edges: { [key: EdgeId]: Edge }
+}
+
+// One playable instance; the frontier is tracked here, not in nodes
+interface GameInstance {
+  id: string
+  source_board_id: string
+  current_board_id: string
   score: number
+  is_terminated: boolean
+  config: GameConfig
 }
 
-// Complete game state
+// Play-path payload — the graph is NOT included
 interface GameState {
-  active_game_id: number
-  cursor: GameCursor
-  active_board: Board      // current board, sparse
-  graph: GraphSnapshot     // all nodes & edges
+  game: GameInstance
+  active_board: Board
 }
 
-// Delta from a move
-interface MoveResponse {
-  game_state: GameState
-  delta: { nodes_added: Node[]; edges_added: Edge[]; is_terminated: boolean }
+interface GameConfig {
+  rows: number
+  cols: number
+  spawn_config: SpawnConfig
+}
+
+interface SpawnConfig {
+  spawns: { [key: number]: number } // tile value → spawn weight
 }
 ```
 
@@ -162,7 +168,8 @@ Two canvases side-by-side (or stacked on mobile):
 **wasmBridge.ts** — Typed JSON serialization layer
 - `loadWasm()` — imports `game_2048_wasm.js`, initializes
 - `createGameWithConfig(config)` → `GameState`
-- `makeMove(gameId, direction)` → `MoveResponse`
+- `makeMove(gameId, direction)` → `GameState`
+- `getGraph()` → `GraphData` (visualization tab only)
 - Full TypeScript types matching Rust struct shapes
 
 ### WASM Boundary
@@ -173,9 +180,13 @@ Two canvases side-by-side (or stacked on mobile):
 m.create_game_with_config(JSON.stringify({ rows: 4, cols: 4 }))
   → GameState (JSON string) → parsed by JS
 
-// Make move
-m.make_move(JSON.stringify({ game_id: 1, direction: "Up" }))
-  → MoveResponse (JSON string) → parsed by JS
+// Make move — game_id as u64 string, direction as "Up"|"Down"|"Left"|"Right"
+m.make_move(game_id_str, "Up")
+  → GameState (JSON string) → parsed by JS
+
+// Graph snapshot — only needed by the visualization tab
+m.get_graph()
+  → GraphData (JSON string) → parsed by JS
 ```
 
 **Rationale for JSON:**
@@ -233,17 +244,11 @@ m.make_move(JSON.stringify({ game_id: 1, direction: "Up" }))
 
 ### Graph Rendering
 
-1. **Input:** `GameState.graph` (all `Node[]`, all `Edge[]`) + `GameState.cursor.sink_id`
-2. **Neighborhood extraction:**
-   - Find all edges where `to === cursorSink` → predecessors
-   - Find all edges where `from === cursorSink` → successors
-3. **Position assignment:**
-   - Predecessors: horizontal row above center
-   - Current: center
-   - Successors: horizontal row below center
-4. **Draw edges:** Lines with directional labels (up/down/left/right/spawn)
-5. **Draw nodes:** Mini 44×44 boards (dense tile rendering), glowing border if current
-6. **Legend:** Game ID, node ID, score, status
+1. **Input:** `getGraph()` snapshot (`GraphData`: nodes + edges) + `game.current_board_id`
+2. **Layout:** dagre directed-graph layout over all nodes/edges (`graph-tab.ts`)
+3. **Draw edges:** Color-coded paths — cyan for `Move`, pink for `Spawn` — with arrow markers
+4. **Draw nodes:** Mini board thumbnails (sparse tile rendering); highlight current and source nodes
+5. **Inspector:** Click a node/edge to see its canonical board or transition metadata
 
 ---
 
@@ -277,8 +282,8 @@ m.make_move(JSON.stringify({ game_id: 1, direction: "Up" }))
 | 2 | Data model: Board, Cell, Node, Edge, GameState | ✅ Done | `wasmBridge.ts` types, `Cargo` deps, Rust structs (internal) |
 | 3 | Move logic: 2048 rules, board updates | 🔄 In progress | Rust logic (not exposed in Phase 2 design) |
 | 4 | Spawning: random 2 or 4 | 🔄 In progress | Integrated into moves (Phase 3) |
-| 5 | Graph updates: node/edge creation | 🔄 In progress | `delta` in `MoveResponse` ready to consume |
-| 6 | Instance management: create, switch games | ✅ Done | `createGameWithConfig()`, `active_game_id` in state |
+| 5 | Graph updates: node/edge creation | ✅ Done | `getGraph()` snapshot for the visualization tab |
+| 6 | Instance management: create, switch games | ✅ Done | `createGameWithConfig()`, `game.id` in state |
 | 7 | JS bridge: JSON serialization | ✅ Done | `wasmBridge.ts`, `serde-wasm-bindgen` |
 | 8 | Board rendering: canvas, visuals, score | ✅ Done | `drawBoard()`, TILE_COLORS, font sizing |
 | 9 | Graph rendering: nodes, edges, layout | 🔄 In progress | `drawFocusedGraph()`, neighborhood extraction, edge labels |

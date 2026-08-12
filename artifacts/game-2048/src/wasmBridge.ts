@@ -47,20 +47,6 @@ export interface GraphData {
 export interface GameState {
   game: GameInstance;
   active_board: Board;
-  graph: GraphData;
-}
-
-export interface GraphDelta {
-  is_terminated: boolean;
-  nodes: Board[];
-  edges: Edge[];
-  current_board_id: string;
-  score_delta: number;
-}
-
-export interface MoveResponse {
-  game_state: GameState;
-  delta: GraphDelta;
 }
 
 export interface GameConfig {
@@ -97,12 +83,6 @@ export async function loadWasm(): Promise<any> {
   return pkg;
 }
 
-export async function createGame(): Promise<GameState> {
-  const m = await loadWasm();
-  const json = m.create_game();
-  return JSON.parse(json) as GameState;
-}
-
 export async function createGameWithConfig(
   config: GameConfig,
 ): Promise<GameState> {
@@ -114,17 +94,22 @@ export async function createGameWithConfig(
 export async function makeMove(
   gameId: string,
   direction: Direction,
-): Promise<MoveResponse> {
+): Promise<GameState> {
   const m = await loadWasm();
-  const req = JSON.stringify({ game_id: gameId, direction });
-  const json = m.make_move(req);
-  return JSON.parse(json) as MoveResponse;
+  const json = m.make_move(gameId, direction);
+  return JSON.parse(json) as GameState;
 }
 
 export async function getState(gameId: string): Promise<GameState> {
   const m = await loadWasm();
   const json = m.get_state(gameId);
   return JSON.parse(json) as GameState;
+}
+
+export async function getGraph(): Promise<GraphData> {
+  const m = await loadWasm();
+  const json = m.get_graph();
+  return JSON.parse(json) as GraphData;
 }
 
 export async function exportGraph(): Promise<ExportData> {

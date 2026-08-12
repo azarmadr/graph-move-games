@@ -30,7 +30,8 @@ pub fn init() {
 #[wasm_bindgen]
 pub fn create_game() -> Result<String, JsValue> {
     create_game_with_config(
-        r#"{"rows":4,"cols":4, "spawn_config": { spawns: {[2]: 1} }}"#.to_string(),
+        serde_json::to_string(&GameConfig::default())
+            .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))?,
     )
 }
 
@@ -51,19 +52,39 @@ pub fn create_game_with_config(config_json: String) -> Result<String, JsValue> {
     })
 }
 
-/// Make a move: `{ game_id, direction }` as JSON string.
-/// Returns full state + delta as JSON string.
+/// Make a move: game_id as u64 string, direction as "Up"|"Down"|"Left"|"Right".
+/// Returns the new game state as JSON string.
 #[wasm_bindgen]
-pub fn make_move(req_json: String) -> Result<String, JsValue> {
-    let req: MoveRequest = serde_json::from_str(&req_json)
-        .map_err(|err| JsValue::from_str(&format!("parse error: {}", err)))?;
+pub fn make_move(game_id_str: String, direction: String) -> Result<String, JsValue> {
+    let game_id: GameId = game_id_str
+        .parse::<u64>()
+        .map(GameId)
+        .map_err(|_| JsValue::from_str("invalid game_id"))?;
+
+    let direction = match direction.as_str() {
+        "Up" => Direction::Up,
+        "Down" => Direction::Down,
+        "Left" => Direction::Left,
+        "Right" => Direction::Right,
+        _ => return Err(JsValue::from_str("invalid direction")),
+    };
 
     ENGINE.with(|e| {
         let mut engine = e.borrow_mut();
-        let response = engine
-            .make_move(req)
+        let state = engine
+            .make_move(game_id, direction)
             .map_err(|err| JsValue::from_str(&err))?;
-        serde_json::to_string(&response)
+        serde_json::to_string(&state)
+            .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
+    })
+}
+
+/// Get the full canonical graph as JSON string (for the visualization tab).
+#[wasm_bindgen]
+pub fn get_graph() -> Result<String, JsValue> {
+    ENGINE.with(|e| {
+        let engine = e.borrow();
+        serde_json::to_string(&engine.get_graph())
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
     })
 }

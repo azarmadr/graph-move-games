@@ -3,13 +3,13 @@ import {
   createGameWithConfig,
   makeMove,
   getState,
+  getGraph,
   exportGraph,
   importGraph,
   type GameState,
   type Direction,
   type GameConfig,
   type GameInstance,
-  type GraphDelta,
   type GraphData,
 } from "./wasmBridge";
 import { GraphTabElement } from "./graph-tab";
@@ -84,7 +84,7 @@ export class GameAppElement extends HTMLElement {
     cols: 4,
     spawn_config: { spawns: { 2: 9, 4: 1 } },
   };
-  private lastMove: GraphDelta | null = null;
+  private lastMove: { moved: boolean; scoreGained: number } | null = null;
   private activeTab: "play" | "graph" = "play";
   private visualizationGraph: GraphData | null = null;
   private visualizationGames: GameInstance[] = [];
@@ -167,10 +167,16 @@ export class GameAppElement extends HTMLElement {
 
   private async handleMove(dir: Direction) {
     if (!this.state || this.state.game.is_terminated) return;
+    const previous = this.state;
     try {
-      const resp = await makeMove(this.state.game.id, dir);
-      this.lastMove = resp.delta;
-      this.state = resp.game_state;
+      const state = await makeMove(this.state.game.id, dir);
+      const moved =
+        state.game.current_board_id !== previous.game.current_board_id;
+      this.lastMove = {
+        moved,
+        scoreGained: moved ? state.game.score - previous.game.score : 0,
+      };
+      this.state = state;
       this.render();
       this.autosave();
     } catch (e) {
@@ -219,8 +225,8 @@ export class GameAppElement extends HTMLElement {
 
   private async openGraphVisualization() {
     try {
-      const snapshot = await exportGraph();
-      this.visualizationGraph = this.state?.graph ?? null;
+      const [graph, snapshot] = await Promise.all([getGraph(), exportGraph()]);
+      this.visualizationGraph = graph;
       this.visualizationGames = Object.values(snapshot.games);
       this.visualizationActiveGameId = this.state?.game.id;
       this.activeTab = "graph";
@@ -388,17 +394,13 @@ export class GameAppElement extends HTMLElement {
                   ? `
                 <div
                   style="margin-top:8px;padding:4px 10px;border-radius:4px;background:${
-                    this.lastMove.nodes.length === 0 &&
-                    this.lastMove.edges.length === 0
-                      ? "#f65e3b"
-                      : "#8f7a66"
+                    this.lastMove.moved ? "#8f7a66" : "#f65e3b"
                   };color:#f9f6f2;font-size:12px;font-weight:600;"
                 >
                   ${
-                    this.lastMove.nodes.length === 0 &&
-                    this.lastMove.edges.length === 0
-                      ? "Invalid move — no graph change"
-                      : `Valid move · +${this.lastMove.nodes.length} nodes · +${this.lastMove.edges.length} edges · +${this.lastMove.score_delta} score`
+                    this.lastMove.moved
+                      ? `Valid move · +${this.lastMove.scoreGained} score`
+                      : "Invalid move — no board change"
                   }
                 </div>
               `
