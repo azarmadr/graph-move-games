@@ -176,6 +176,9 @@ importers:
       '@dagrejs/dagre':
         specifier: ^3.0.0
         version: 3.0.0
+      '@rollup/rollup-linux-arm64-gnu':
+        specifier: ^4.62.4
+        version: 4.62.4
       '@rollup/rollup-win32-x64-msvc':
         specifier: ^4.62.2
         version: 4.62.2
@@ -318,6 +321,11 @@ packages:
 
   '@pinojs/redact@0.4.0':
     resolution: {integrity: sha512-k2ENnmBugE/rzQfEcdWHcCY+/FM3VLzH9cYEsbdsoqrvzAKRhUZeRNhAZvB8OitQJ1TBed3yqWtdjzS6wJKBwg==}
+
+  '@rollup/rollup-linux-arm64-gnu@4.62.4':
+    resolution: {integrity: sha512-CcnXHWnXg69g+DX5VWL3FHts3qMRN2uVEHX+BZvGLdd07/gXkn3ePjYtO1LDJvxkGKVHMclKBRa1QUTH+6toYQ==}
+    cpu: [arm64]
+    os: [linux]
 
   '@rollup/rollup-linux-x64-gnu@4.62.2':
     resolution: {integrity: sha512-5BqxR/pshjey51iliyzTD5Xi3EN0aLmQ2lZ3lvefVV9c82BvrLo2/6OT55iifpWBufs6kdwWbuOKS841DrmK9A==}
@@ -1515,6 +1523,8 @@ snapshots:
       - typescript
 
   '@pinojs/redact@0.4.0': {}
+
+  '@rollup/rollup-linux-arm64-gnu@4.62.4': {}
 
   '@rollup/rollup-linux-x64-gnu@4.62.2':
     optional: true
