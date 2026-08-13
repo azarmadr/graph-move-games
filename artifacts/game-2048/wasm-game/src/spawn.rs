@@ -3,21 +3,23 @@ use {
     rand::RngExt,
 };
 
-/// Sample one spawn outcome for the given board.
-///
-/// The randomness is generated inside Rust/WASM. The frontend does not provide
-/// a seed or random value. The empty position is selected uniformly, and tile
-/// values are selected according to the configured integer weights.
-pub fn sample_spawn(board: &Board, config: &SpawnConfig) -> Result<Vec<Cell>, String> {
-    let empties = board.empty_positions();
-    if empties.is_empty() {
-        return Ok(Vec::new());
+impl Board {
+    /// Sample one spawn outcome for the given board.
+    ///
+    /// The randomness is generated inside Rust/WASM. The frontend does not provide
+    /// a seed or random value. The empty position is selected uniformly, and tile
+    /// values are selected according to the configured integer weights.
+    pub fn sample_spawn(&self, config: &SpawnConfig) -> Result<Vec<Cell>, String> {
+        let empties = self.empty_positions();
+        if empties.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let pos = random_item(&empties)?;
+        let tile = weighted_tile(config)?;
+
+        Ok(vec![Cell::new(pos.r, pos.c, tile)])
     }
-
-    let pos = random_item(&empties)?;
-    let tile = weighted_tile(config)?;
-
-    Ok(vec![Cell::new(pos.r, pos.c, tile)])
 }
 
 fn random_item<T: Clone>(items: &[T]) -> Result<T, String> {
@@ -71,7 +73,7 @@ mod tests {
         };
 
         for _ in 0..64 {
-            let result = sample_spawn(&board, &config).unwrap();
+            let result = board.sample_spawn(&config).unwrap();
             assert_eq!(result.len(), 1);
             assert!(board.empty_positions().contains(&result[0].pos));
             assert!(matches!(result[0].tile, 2 | 4));
@@ -85,7 +87,7 @@ mod tests {
             spawns: HashMap::from([(2, 1)]),
         };
         let positions: HashSet<Pos> = (0..128)
-            .map(|_| sample_spawn(&board, &config).unwrap()[0].pos)
+            .map(|_| board.sample_spawn(&config).unwrap()[0].pos)
             .collect();
 
         assert!(positions.len() > 1, "spawn position did not vary");
@@ -98,7 +100,7 @@ mod tests {
             spawns: HashMap::from([(2, 9), (4, 1)]),
         };
         let tiles: HashSet<u32> = (0..256)
-            .map(|_| sample_spawn(&board, &config).unwrap()[0].tile)
+            .map(|_| board.sample_spawn(&config).unwrap()[0].tile)
             .collect();
 
         assert_eq!(tiles, HashSet::from([2, 4]));
@@ -111,7 +113,7 @@ mod tests {
             spawns: HashMap::from([(2, 0), (4, 0)]),
         };
 
-        let error = sample_spawn(&board, &config).unwrap_err();
+        let error = board.sample_spawn(&config).unwrap_err();
         assert!(error.contains("positive weight"));
     }
 
@@ -122,6 +124,6 @@ mod tests {
             spawns: HashMap::from([(2, 1)]),
         };
 
-        assert!(sample_spawn(&board, &config).unwrap().is_empty());
+        assert!(board.sample_spawn(&config).unwrap().is_empty());
     }
 }

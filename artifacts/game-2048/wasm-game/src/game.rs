@@ -1,5 +1,5 @@
 use {
-    crate::{graph::GraphStore, move_logic::resolve_move, spawn::sample_spawn, types::*},
+    crate::{graph::GraphStore, types::*},
     serde::{Deserialize, Serialize},
     std::collections::HashMap,
 };
@@ -59,7 +59,7 @@ impl Engine {
         config: GameConfig,
     ) -> Result<GameState, String> {
         let (start_board_id, _) = self.graph.get_or_create_node(board.clone());
-        let is_terminated = !has_any_valid_move_helper(&board);
+        let is_terminated = board.valid_moves().is_empty();
 
         let game = GameInstance {
             id: game_id,
@@ -93,7 +93,7 @@ impl Engine {
             .cloned()
             .ok_or_else(|| format!("game {} not found", game_id))?;
 
-        let current_board = self
+        let mut current_board = self
             .graph
             .get_node(game.current_board_id)
             .cloned()
@@ -105,17 +105,16 @@ impl Engine {
         }
 
         // Case 2/3: resolve merge
-        let (merged_board, merge_score, valid) = resolve_move(&current_board, direction);
-        if !valid {
+        let Some(merge_score) = current_board.resolve_move(direction) else {
             return Ok(self.build_state(game));
-        }
+        };
 
         // Step 3: merged node
         let (merge_board_id, _) = self.graph.get_or_create_node(current_board.clone());
 
         // Step 4/5: spawn
-        let spawn_cells = sample_spawn(&merged_board, &game.config.spawn_config)?;
-        let spawned_board = spawn_cells.iter().fold(merged_board.clone(), |b, cell| {
+        let spawn_cells = current_board.sample_spawn(&game.config.spawn_config)?;
+        let spawned_board = spawn_cells.iter().fold(current_board.clone(), |b, cell| {
             b.set(cell.pos.r, cell.pos.c, cell.tile)
         });
         let (spawn_board_id, _) = self.graph.get_or_create_node(spawned_board.clone());
@@ -126,8 +125,8 @@ impl Engine {
         self.graph
             .insert_edge(merge_board_id, spawn_board_id, Edge::Spawn(spawn_cells));
 
-        // Step 7: termination check
-        let is_terminated = !has_any_valid_move_helper(&spawned_board);
+        // Step 7: termination check on the spawned board
+        let is_terminated = spawned_board.valid_moves().is_empty();
 
         // Step 8: update game instance
         game.score += merge_score as u64;
@@ -177,24 +176,12 @@ impl Engine {
             .graph
             .get_node(game.current_board_id)
             .cloned()
-            .unwrap_or_else(Board::empty);
+            .unwrap_or_else(|| Board::with_dim(game.config.rows, game.config.cols));
         GameState {
             game,
             active_board: board,
         }
     }
-}
-
-/// Check if any direction produces a valid move from this board.
-fn has_any_valid_move_helper(board: &Board) -> bool {
-    use Direction::*;
-    for dir in [Up, Down, Left, Right] {
-        let (_, _, valid) = resolve_move(board, dir);
-        if valid {
-            return true;
-        }
-    }
-    false
 }
 
 #[cfg(test)]

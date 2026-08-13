@@ -38,15 +38,7 @@ pub struct Board {
     pub tiles: Vec<Cell>,
 }
 
-#[allow(dead_code)]
 impl Board {
-    pub fn empty() -> Self {
-        Self {
-            dim: (4, 4),
-            tiles: Vec::new(),
-        }
-    }
-
     pub fn with_dim(rows: u8, cols: u8) -> Self {
         Self {
             dim: (rows, cols),
@@ -60,6 +52,11 @@ impl Board {
             dim: (rows, cols),
             tiles,
         }
+    }
+
+    pub(crate) fn set_tiles(&mut self, mut tiles: Vec<Cell>) {
+        tiles.sort_by_key(|t| (t.pos.r, t.pos.c));
+        self.tiles = tiles;
     }
 
     pub fn tile_at(&self, r: u8, c: u8) -> Option<u32> {
@@ -97,19 +94,6 @@ impl Board {
         }
     }
 
-    pub fn remove(&self, r: u8, c: u8) -> Self {
-        let tiles: Vec<Cell> = self
-            .tiles
-            .iter()
-            .filter(|t| !(t.pos.r == r && t.pos.c == c))
-            .cloned()
-            .collect();
-        Self {
-            dim: self.dim,
-            tiles,
-        }
-    }
-
     /// Hashable canonical representation used for content-addressed IDs.
     fn hash_content(&self, hasher: &mut Fnv1a) {
         hasher.write_u8(self.dim.0);
@@ -119,6 +103,122 @@ impl Board {
             hasher.write_u8(cell.pos.c);
             hasher.write_u32(cell.tile);
         }
+    }
+
+    /// Returns directions that produce a valid move from this board.
+    /// Only directions that actually change the board are included.
+    pub fn valid_moves(&self) -> Vec<Direction> {
+        use Direction::*;
+        let mut valid = Vec::new();
+        let rows = self.dim.0 as usize;
+        let cols = self.dim.1 as usize;
+
+        // Helper: check if a line can move left (has sliding or merging potential)
+        fn line_can_move_left(line: &[u32]) -> bool {
+            let len = line.len();
+            // Check for empty space a tile can slide into
+            for i in 0..len {
+                if line[i] != 0 {
+                    // Can slide left if there's a zero to its left
+                    if i > 0 && line[i - 1] == 0 {
+                        return true;
+                    }
+                    // Can merge with left neighbor
+                    if i > 0 && line[i] == line[i - 1] {
+                        return true;
+                    }
+                }
+            }
+            // Check from the left: is there a non-zero with only zeros to its left?
+            let mut all_zeros_left = true;
+            for &i in line.iter() {
+                if i != 0 {
+                    all_zeros_left = false;
+                    break;
+                }
+            }
+            // If there are non-zero tiles and not all at position 0, can slide
+            if !all_zeros_left {
+                let first_nonzero = line.iter().position(|&x| x != 0).unwrap_or(len);
+                if first_nonzero > 0 {
+                    return true;
+                }
+            }
+            false
+        }
+
+        // Helper: check if a line can move right
+        fn line_can_move_right(line: &[u32]) -> bool {
+            let len = line.len();
+            // Check from the right: is there a non-zero not at position len-1?
+            let last_nonzero = line.iter().rposition(|&x| x != 0).unwrap_or(len);
+            if last_nonzero < len - 1 {
+                return true; // Can slide right
+            }
+            // Check for adjacent equal tiles
+            for i in (1..len).rev() {
+                if line[i] != 0 && line[i] == line[i - 1] {
+                    return true; // Can merge
+                }
+            }
+            false
+        }
+
+        // Helper: check if a line can move up (same logic as left)
+        fn line_can_move_up(line: &[u32]) -> bool {
+            line_can_move_left(line)
+        }
+
+        // Helper: check if a line can move down (same logic as right)
+        fn line_can_move_down(line: &[u32]) -> bool {
+            line_can_move_right(line)
+        }
+
+        // Check Left: any row has a tile that can slide/merge left
+        'left_check: for r in 0..rows {
+            let line: Vec<u32> = (0..cols)
+                .map(|c| self.tile_at(r as u8, c as u8).unwrap_or_default())
+                .collect();
+            if line_can_move_left(&line) {
+                valid.push(Left);
+                break 'left_check;
+            }
+        }
+
+        // Check Right: any row has a tile that can slide/merge right
+        'right_check: for r in 0..rows {
+            let line: Vec<u32> = (0..cols)
+                .map(|c| self.tile_at(r as u8, c as u8).unwrap_or_default())
+                .collect();
+            if line_can_move_right(&line) {
+                valid.push(Right);
+                break 'right_check;
+            }
+        }
+
+        // Check Up: any column has a tile that can slide/merge up
+        'up_check: for c in 0..cols {
+            let line: Vec<u32> = (0..rows)
+                .map(|r| self.tile_at(r as u8, c as u8).unwrap_or_default())
+                .collect();
+            if line_can_move_up(&line) {
+                valid.push(Up);
+                break 'up_check;
+            }
+        }
+
+        // Check Down: any column has a tile that can slide/merge down
+        'down_check: for c in 0..cols {
+            let line: Vec<u32> = (0..rows)
+                .map(|r| self.tile_at(r as u8, c as u8).unwrap_or_default())
+                .collect();
+            if line_can_move_down(&line) {
+                valid.push(Down);
+                break 'down_check;
+            }
+        }
+
+        valid
     }
 }
 
