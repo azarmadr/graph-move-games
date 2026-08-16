@@ -80,8 +80,8 @@ function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
 export class GameAppElement extends HTMLElement {
   private state: GameState | null = null;
   private config: GameConfig = {
-    rows: 4,
-    cols: 4,
+    rows: 3,
+    cols: 3,
     spawn_config: { spawns: { 2: 9, 4: 1 } },
   };
   private lastMove: { moved: boolean; scoreGained: number } | null = null;
