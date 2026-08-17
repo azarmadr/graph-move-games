@@ -154,11 +154,14 @@ export class GraphTabElement extends HTMLElement {
   private _graphData: GraphData | null = null;
   private _games: GameInstance[] = [];
   private _activeGameId: string | undefined;
+  private _loadingState: "skeleton" | "loading" | "ready" | "error" =
+    "skeleton";
   private selectedId: string | null = null;
   private hoveredId: string | null = null;
 
   set graphData(value: GraphData | null) {
     this._graphData = value;
+    this._loadingState = value ? "ready" : "skeleton";
     this.render();
   }
 
@@ -184,11 +187,35 @@ export class GraphTabElement extends HTMLElement {
     return this._activeGameId;
   }
 
+  get loadingState(): "skeleton" | "loading" | "ready" | "error" {
+    return this._loadingState;
+  }
+
   connectedCallback() {
     this.render();
   }
 
   private render() {
+    if (this._loadingState === "skeleton") {
+      this.innerHTML = `
+        <div class="graph-skeleton">
+          <div class="graph-skeleton-spinner"></div>
+          <div class="graph-skeleton-text">Loading graph...</div>
+        </div>
+      `;
+      return;
+    }
+
+    if (this._loadingState === "error") {
+      this.innerHTML = `
+        <div class="graph-error">
+          <div class="graph-error-text">Failed to load graph data</div>
+          <button class="graph-error-retry" type="button">Retry</button>
+        </div>
+      `;
+      return;
+    }
+
     const graphData = this._graphData;
     if (!graphData) {
       this.innerHTML = `<div class="graph-empty">Build the graph by making a move.</div>`;
@@ -264,97 +291,80 @@ export class GraphTabElement extends HTMLElement {
       .join("");
 
     this.innerHTML = `
-      <section class="full-graph-panel">
-        <div class="full-graph-heading">
-          <div>
-            <p class="eyebrow">Global DAG</p>
-            <h2>Every board state, one graph</h2>
-            <p class="graph-subtitle">
-              Every canonical state is shown as a mini 2048 board.
-            </p>
-          </div>
-          <div class="graph-metrics">
-            <span><strong>${nodeCount}</strong> nodes</span>
-            <span><strong>${edgeCount}</strong> edges</span>
-            <span><strong>${this._games.length}</strong> games</span>
-          </div>
-        </div>
-
-        <div class="full-graph-stage">
-          <div
-            class="graph-canvas"
-            style="width:${layout.width}px;height:${layout.height}px;"
+      <div class="graph-infinite-container">
+        <div
+          class="graph-canvas"
+          style="width:${layout.width}px;height:${layout.height}px;"
+        >
+          <svg
+            class="graph-edges"
+            width="${layout.width}"
+            height="${layout.height}"
+            viewBox="0 0 ${layout.width} ${layout.height}"
+            aria-hidden="true"
           >
-            <svg
-              class="graph-edges"
-              width="${layout.width}"
-              height="${layout.height}"
-              viewBox="0 0 ${layout.width} ${layout.height}"
-              aria-hidden="true"
-            >
-              <defs>
-                <marker
-                  id="graph-arrow-move"
-                  markerWidth="8"
-                  markerHeight="8"
-                  refX="7"
-                  refY="4"
-                  orient="auto"
-                >
-                  <path d="M 0 0 L 8 4 L 0 8 z" fill="#4cc9f0" />
-                </marker>
-                <marker
-                  id="graph-arrow-spawn"
-                  markerWidth="8"
-                  markerHeight="8"
-                  refX="7"
-                  refY="4"
-                  orient="auto"
-                >
-                  <path d="M 0 0 L 8 4 L 0 8 z" fill="#f72585" />
-                </marker>
-              </defs>
-              ${edgesSvg}
-            </svg>
+            <defs>
+              <marker
+                id="graph-arrow-move"
+                markerWidth="8"
+                markerHeight="8"
+                refX="7"
+                refY="4"
+                orient="auto"
+              >
+                <path d="M 0 0 L 8 4 L 0 8 z" fill="#4cc9f0" />
+              </marker>
+              <marker
+                id="graph-arrow-spawn"
+                markerWidth="8"
+                markerHeight="8"
+                refX="7"
+                refY="4"
+                orient="auto"
+              >
+                <path d="M 0 0 L 8 4 L 0 8 z" fill="#f72585" />
+              </marker>
+            </defs>
+            ${edgesSvg}
+          </svg>
 
-            ${nodeButtons}
-          </div>
-
-          ${
-            hoveredNode
-              ? `<div class="graph-hover-card">
-                  <strong>Board ${this.hoveredId!.slice(0, 12)}</strong>
-                  <span>${boardSummary(hoveredNode)}</span>
-                </div>`
-              : ""
-          }
-          ${!nodeCount ? `<div class="graph-empty">No graph nodes yet.</div>` : ""}
+          ${nodeButtons}
         </div>
 
-        <aside class="graph-inspector">
-          ${
-            !selectedNode && !selectedEdge
-              ? `<p>Select a node or edge to inspect its canonical data.</p>`
-              : ""
-          }
-          ${
-            selectedNode
-              ? `<p class="eyebrow">Selected board</p>
-                 <h3>${selectedNodeId ?? ""}</h3>
-                 <p>${selectedNode.dim.join(" × ")} board</p>
-                 <p>${boardSummary(selectedNode)}</p>`
-              : ""
-          }
-          ${
-            selectedEdge
-              ? `<p class="eyebrow">Selected transition</p>
-                 <h3>${selectedEdgeId}</h3>
-                 <p>${edgeLabel(selectedEdge)}</p>
-                 <p>${selectedEdge.from.slice(0, 10)} → ${selectedEdge.to.slice(0, 10)}</p>`
-              : ""
-          }
-        </aside>
-      </section>
+        ${
+          hoveredNode
+            ? `<div class="graph-hover-card">
+                <strong>Board ${this.hoveredId!.slice(0, 12)}</strong>
+                <span>${boardSummary(hoveredNode)}</span>
+              </div>`
+            : ""
+        }
+        ${!nodeCount ? `<div class="graph-empty">No graph nodes yet.</div>` : ""}
+      </div>
+
+      <aside class="graph-inspector">
+        ${
+          !selectedNode && !selectedEdge
+            ? `<p>Select a node or edge to inspect its canonical data.</p>`
+            : ""
+        }
+        ${
+          selectedNode
+            ? `<p class="eyebrow">Selected board</p>
+               <h3>${selectedNodeId ?? ""}</h3>
+               <p>${selectedNode.dim.join(" × ")} board</p>
+               <p>${boardSummary(selectedNode)}</p>`
+            : ""
+        }
+        ${
+          selectedEdge
+            ? `<p class="eyebrow">Selected transition</p>
+               <h3>${selectedEdgeId}</h3>
+               <p>${edgeLabel(selectedEdge)}</p>
+               <p>${selectedEdge.from.slice(0, 10)} → ${selectedEdge.to.slice(0, 10)}</p>`
+            : ""
+        }
+      </aside>
     `;
 
     this.bindEvents();

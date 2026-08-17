@@ -1,6 +1,9 @@
 import "./index.css";
 import { GameAppElement } from "./game-app";
 import { GraphTabElement } from "./graph-tab";
+import { GraphControlsElement } from "./graph-controls";
+import { GameBoardElement } from "./game-board";
+import { ScoreDisplayElement } from "./score-display";
 
 function showError(error: unknown) {
   const target = document.querySelector("game-app") ?? document.body;
@@ -27,3 +30,6 @@ window.addEventListener("unhandledrejection", (event) => {
 
 customElements.define("game-app", GameAppElement);
 customElements.define("graph-tab", GraphTabElement);
+customElements.define("graph-controls", GraphControlsElement);
+customElements.define("game-board", GameBoardElement);
+customElements.define("score-display", ScoreDisplayElement);

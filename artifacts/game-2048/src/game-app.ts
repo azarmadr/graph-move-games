@@ -13,75 +13,15 @@ import {
   type GraphData,
 } from "./wasmBridge";
 import { GraphTabElement } from "./graph-tab";
-
-const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
-  0: { bg: "#cdc1b4", fg: "#cdc1b4" },
-  2: { bg: "#eee4da", fg: "#776e65" },
-  4: { bg: "#ede0c8", fg: "#776e65" },
-  8: { bg: "#f2b179", fg: "#f9f6f2" },
-  16: { bg: "#f59563", fg: "#f9f6f2" },
-  32: { bg: "#f67c5f", fg: "#f9f6f2" },
-  64: { bg: "#f65e3b", fg: "#f9f6f2" },
-  128: { bg: "#edcf72", fg: "#f9f6f2" },
-  256: { bg: "#edcc61", fg: "#f9f6f2" },
-  512: { bg: "#edc850", fg: "#f9f6f2" },
-  1024: { bg: "#edc53f", fg: "#f9f6f2" },
-  2048: { bg: "#edc22e", fg: "#f9f6f2" },
-};
-
-function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
-  const ctx = canvas.getContext("2d")!;
-  const size = canvas.width;
-  const padding = 12;
-  const gap = 8;
-  const [rows, cols] = state.active_board.dim;
-  const cellSize =
-    (size - padding * 2 - gap * (Math.max(rows, cols) - 1)) /
-    Math.max(rows, cols);
-  const boardW = padding * 2 + cols * cellSize + (cols - 1) * gap;
-  const boardH = padding * 2 + rows * cellSize + (rows - 1) * gap;
-
-  ctx.fillStyle = "#bbada0";
-  ctx.beginPath();
-  ctx.roundRect(0, 0, boardW, boardH, 8);
-  ctx.fill();
-
-  const grid: number[][] = Array.from({ length: rows }, () =>
-    Array(cols).fill(0),
-  );
-  for (const cell of state.active_board.tiles) {
-    grid[cell.pos.r][cell.pos.c] = cell.tile;
-  }
-
-  for (let r = 0; r < rows; r++) {
-    for (let c = 0; c < cols; c++) {
-      const val = grid[r][c];
-      const x = padding + c * (cellSize + gap);
-      const y = padding + r * (cellSize + gap);
-      const colors = TILE_COLORS[val] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
-
-      ctx.fillStyle = colors.bg;
-      ctx.beginPath();
-      ctx.roundRect(x, y, cellSize, cellSize, 4);
-      ctx.fill();
-
-      if (val > 0) {
-        ctx.fillStyle = colors.fg;
-        const fontSize = val >= 1024 ? 20 : val >= 128 ? 24 : 28;
-        ctx.font = `bold ${fontSize}px "Clear Sans", Arial, sans-serif`;
-        ctx.textAlign = "center";
-        ctx.textBaseline = "middle";
-        ctx.fillText(String(val), x + cellSize / 2, y + cellSize / 2);
-      }
-    }
-  }
-}
+import { GameBoardElement } from "./game-board";
+import { ScoreDisplayElement } from "./score-display";
+import { GraphControlsElement } from "./graph-controls";
 
 export class GameAppElement extends HTMLElement {
   private state: GameState | null = null;
   private config: GameConfig = {
-    rows: 4,
-    cols: 4,
+    rows: 3,
+    cols: 3,
     spawn_config: { spawns: { 2: 9, 4: 1 } },
   };
   private lastMove: { moved: boolean; scoreGained: number } | null = null;
@@ -89,7 +29,6 @@ export class GameAppElement extends HTMLElement {
   private visualizationGraph: GraphData | null = null;
   private visualizationGames: GameInstance[] = [];
   private visualizationActiveGameId: string | undefined;
-  private touchStart: { x: number; y: number } | null = null;
 
   private static readonly STORAGE_KEY = "game-2048-persisted-v1";
 
@@ -184,33 +123,6 @@ export class GameAppElement extends HTMLElement {
     }
   }
 
-  private onTouchStart = (e: TouchEvent) => {
-    const t = e.touches[0];
-    this.touchStart = { x: t.clientX, y: t.clientY };
-  };
-
-  private onTouchMove = (e: TouchEvent) => {
-    e.preventDefault();
-  };
-
-  private onTouchEnd = (e: TouchEvent) => {
-    const start = this.touchStart;
-    if (!start || e.changedTouches.length === 0) return;
-    const t = e.changedTouches[0];
-    const dx = t.clientX - start.x;
-    const dy = t.clientY - start.y;
-    const absDx = Math.abs(dx);
-    const absDy = Math.abs(dy);
-    const threshold = 24;
-    if (Math.max(absDx, absDy) < threshold) return;
-    if (absDx > absDy) {
-      void this.handleMove(dx > 0 ? "Right" : "Left");
-    } else {
-      void this.handleMove(dy > 0 ? "Down" : "Up");
-    }
-    this.touchStart = null;
-  };
-
   private async startNewGame(rows: number, cols: number) {
     const newConfig = {
       rows,
@@ -224,13 +136,15 @@ export class GameAppElement extends HTMLElement {
   }
 
   private async openGraphVisualization() {
+    this.activeTab = "graph";
+    this.render();
+
     try {
       const [graph, snapshot] = await Promise.all([getGraph(), exportGraph()]);
       this.visualizationGraph = graph;
       this.visualizationGames = Object.values(snapshot.games);
       this.visualizationActiveGameId = this.state?.game.id;
-      this.activeTab = "graph";
-      this.render();
+      this.linkGraphTab();
     } catch (e) {
       console.error("graph visualization snapshot failed:", e);
     }
@@ -303,122 +217,17 @@ export class GameAppElement extends HTMLElement {
 
         ${
           tab === "graph"
-            ? `<graph-tab></graph-tab>`
-            : `
-          <div
-            style="display:flex;gap:32px;flex-wrap:wrap;justify-content:center;position:relative;"
-          >
-            <div
-              style="display:flex;flex-direction:column;align-items:center;gap:8px;"
-            >
-              <div
-                style="display:flex;justify-content:space-between;width:360px;align-items:center;"
-              >
-                <span style="color:#776e65;font-weight:700;font-size:15px;">
-                  Board
-                </span>
-                <span
-                  style="background:#bbada0;color:#f9f6f2;font-weight:700;padding:4px 14px;border-radius:4px;font-size:14px;"
-                >
-                  SCORE: ${this.state?.game.score ?? 0}
-                </span>
-              </div>
-              <div style="position:relative;">
-                <canvas
-                  width="360"
-                  height="360"
-                  style="border-radius:8px;display:block;touch-action:none;"
-                ></canvas>
-                ${
-                  isGameOver
-                    ? `
-                  <div
-                    style="position:absolute;top:0;left:0;width:100%;height:100%;border-radius:8px;background:rgba(0,0,0,0.6);display:flex;align-items:center;justify-content:center;z-index:10;"
-                  >
-                    <div
-                      style="background:#f65e3b;color:#f9f6f2;padding:24px;border-radius:8px;text-align:center;box-shadow:0 4px 12px rgba(0,0,0,0.3);"
-                    >
-                      <div
-                        style="font-size:24px;font-weight:800;margin-bottom:8px;"
-                      >
-                        Game Over!
-                      </div>
-                      <div
-                        style="font-size:14px;opacity:0.9;margin-bottom:12px;"
-                      >
-                        No more valid moves
-                      </div>
-                      <button
-                        type="button"
-                        data-action="new-game"
-                        style="padding:8px 16px;border-radius:4px;border:none;background:#f9f6f2;color:#f65e3b;font-size:12px;font-weight:700;cursor:pointer;"
-                      >
-                        New Game
-                      </button>
-                    </div>
-                  </div>
-                `
-                    : ""
-                }
-              </div>
-              <div
-                class="arrow-buttons"
-                style="display:flex;gap:8px;margin-top:8px;"
-              >
-                ${(
-                  [
-                    ["↑", "Up"],
-                    ["↓", "Down"],
-                    ["←", "Left"],
-                    ["→", "Right"],
-                  ] as const
-                )
-                  .map(
-                    ([label, dir]) => `
-                  <button
-                    type="button"
-                    data-dir="${dir}"
-                    ${isGameOver ? "disabled" : ""}
-                    style="width:44px;height:44px;border-radius:6px;border:none;background:#bbada0;color:#f9f6f2;font-size:18px;font-weight:700;cursor:${
-                      isGameOver ? "not-allowed" : "pointer"
-                    };opacity:${isGameOver ? 0.5 : 1};"
-                  >
-                    ${label}
-                  </button>
-                `,
-                  )
-                  .join("")}
-              </div>
-              ${
-                this.lastMove
-                  ? `
-                <div
-                  style="margin-top:8px;padding:4px 10px;border-radius:4px;background:${
-                    this.lastMove.moved ? "#8f7a66" : "#f65e3b"
-                  };color:#f9f6f2;font-size:12px;font-weight:600;"
-                >
-                  ${
-                    this.lastMove.moved
-                      ? `Valid move · +${this.lastMove.scoreGained} score`
-                      : "Invalid move — no board change"
-                  }
-                </div>
-              `
-                  : ""
-              }
-            </div>
-          </div>
-        `
+            ? `<div class="graph-container">
+                <graph-tab></graph-tab>
+                <graph-controls></graph-controls>
+              </div>`
+            : `<game-board></game-board>`
         }
       </div>
     `;
 
     this.bindEvents();
-    if (this.activeTab === "play" && this.state) {
-      const canvas = this.querySelector<HTMLCanvasElement>("canvas");
-      if (canvas) drawBoard(canvas, this.state);
-    }
-    if (this.activeTab === "graph") this.linkGraphTab();
+    this.linkChildElements();
   }
 
   private bindEvents() {
@@ -438,23 +247,31 @@ export class GameAppElement extends HTMLElement {
         void this.startNewGame(r, c);
       });
     }
-    for (const btn of this.querySelectorAll<HTMLButtonElement>("[data-dir]")) {
-      btn.addEventListener("click", () => {
-        void this.handleMove(btn.dataset.dir as Direction);
-      });
+  }
+
+  private linkChildElements() {
+    if (this.activeTab === "play") {
+      const board = this.querySelector<GameBoardElement>("game-board");
+      if (board) {
+        board.state = this.state;
+        board.lastMove = this.lastMove;
+        board.addEventListener("move", ((e: CustomEvent) => {
+          void this.handleMove(e.detail.direction);
+        }) as EventListener);
+        board.addEventListener("new-game", () => {
+          void this.startNewGame(this.config.rows, this.config.cols);
+        });
+      }
+
+      const score = this.querySelector<ScoreDisplayElement>("score-display");
+      if (score) {
+        score.state = this.state;
+        score.lastMove = this.lastMove;
+      }
     }
-    for (const btn of this.querySelectorAll<HTMLButtonElement>(
-      '[data-action="new-game"]',
-    )) {
-      btn.addEventListener("click", () => {
-        void this.startNewGame(this.config.rows, this.config.cols);
-      });
-    }
-    const canvas = this.querySelector<HTMLCanvasElement>("canvas");
-    if (canvas) {
-      canvas.addEventListener("touchstart", this.onTouchStart);
-      canvas.addEventListener("touchmove", this.onTouchMove);
-      canvas.addEventListener("touchend", this.onTouchEnd);
+
+    if (this.activeTab === "graph") {
+      this.linkGraphTab();
     }
   }
 
