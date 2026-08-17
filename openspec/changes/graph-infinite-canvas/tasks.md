@@ -2,10 +2,10 @@
 
 - [x] 1.1 Create `<graph-tab>` custom element: accepts graph-data, games, active-game-id properties; manages its own dagre layout and SVG rendering
 - [x] 1.2 Create `<graph-controls>` custom element: renders hop filter buttons, legend, info; communicates filter changes via custom events
-- [ ] 1.3 Create `<game-board>` custom element: accepts game-state property; handles canvas rendering, keyboard/touch/button input internally; emits move events
-- [ ] 1.4 Create `<score-display>` custom element: accepts score and game-state properties; renders score, status, messages
-- [ ] 1.5 Refactor `game-app.ts` into thin orchestrator: initializes WASM, manages game state, passes state down to child WCs, listens for events
-- [ ] 1.6 Register all new custom elements in `main.ts`
+- [x] 1.3 Create `<game-board>` custom element: accepts game-state property; handles canvas rendering, keyboard/touch/button input internally; emits move events
+- [x] 1.4 Create `<score-display>` custom element: accepts score and game-state properties; renders score, status, messages
+- [x] 1.5 Refactor `game-app.ts` into thin orchestrator: initializes WASM, manages game state, passes state down to child WCs, listens for events
+- [x] 1.6 Register all new custom elements in `main.ts`
 
 ## 2. Async Graph Loading (Phase 2)
 

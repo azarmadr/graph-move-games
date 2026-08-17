@@ -375,8 +375,8 @@ pub struct GameConfig {
 impl Default for GameConfig {
     fn default() -> Self {
         Self {
-            rows: 4,
-            cols: 4,
+            rows: 3,
+            cols: 3,
             spawn_config: SpawnConfig::default(),
         }
     }
