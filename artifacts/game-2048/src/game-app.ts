@@ -410,32 +410,6 @@ export class GameAppElement extends HTMLElement {
           </div>
         `
         }
-
-        <div
-          style="margin-top:32px;padding:16px 24px;background:#ede0c8;border-radius:8px;max-width:600px;width:100%;"
-        >
-          <h3
-            style="color:#776e65;margin:0 0 8px;font-size:14px;font-weight:700;"
-          >
-            Game Over Fix
-          </h3>
-          <ul
-            style="color:#776e65;font-size:13px;margin:0;padding-left:18px;line-height:1.8;"
-          >
-            <li>
-              ✅ Fixed: Game over check now uses{" "}
-              <code>state.game.is_terminated</code>
-            </li>
-            <li>✅ Buttons properly disabled when game is terminated</li>
-            <li>✅ Game over modal overlay with "New Game" button</li>
-            <li>✅ Keyboard/touch input blocked when game is over</li>
-            <li>Nodes: Pure board states (no <code>NodeKind</code>)</li>
-            <li>
-              Edges: Atomic transitions with <code>kind</code>: <code>Move</code>{" "}
-              or <code>Spawn</code>
-            </li>
-          </ul>
-        </div>
       </div>
     `;
 
