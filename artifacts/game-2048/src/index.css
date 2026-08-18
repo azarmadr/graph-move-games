@@ -108,23 +108,35 @@ body {
 .full-graph-stage {
   position: relative;
   min-height: 680px;
-  overflow: auto;
-  border: 2px solid #d8cbbb;
+  overflow: hidden;
   border-radius: 14px;
-  background: #fbf8f0;
+  background: #faf8ef;
+}
+
+.graph-container {
+  position: relative;
+  display: flex;
+  gap: 16px;
 }
 
 .graph-infinite-container {
   position: relative;
-  overflow: auto;
-  min-height: 400px;
+  flex: 1;
+  min-height: 500px;
+  overflow: hidden;
+  background: #faf8ef;
+  cursor: grab;
+}
+
+.graph-infinite-container.grabbing {
+  cursor: grabbing;
 }
 
 .graph-canvas {
-  position: relative;
-  min-width: 100%;
-  min-height: 100%;
-  margin: 0 auto;
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
 }
 
 .graph-edges {
