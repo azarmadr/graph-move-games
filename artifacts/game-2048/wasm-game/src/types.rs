@@ -46,6 +46,7 @@ impl Board {
         }
     }
 
+    #[cfg(test)]
     pub fn with_tiles(rows: u8, cols: u8, mut tiles: Vec<Cell>) -> Self {
         tiles.sort_by_key(|t| (t.pos.r, t.pos.c));
         Self {
@@ -80,18 +81,13 @@ impl Board {
     }
 
     /// Insert or replace a cell at a position. Returns a new Board.
-    pub fn set(&self, r: u8, c: u8, tile: u32) -> Self {
-        let mut tiles = self.tiles.clone();
-        if let Some(existing) = tiles.iter_mut().find(|t| t.pos.r == r && t.pos.c == c) {
+    pub fn set(&mut self, r: u8, c: u8, tile: u32) {
+        if let Some(existing) = self.tiles.iter_mut().find(|t| t.pos.r == r && t.pos.c == c) {
             existing.tile = tile;
         } else {
-            tiles.push(Cell::new(r, c, tile));
+            self.tiles.push(Cell::new(r, c, tile));
         }
-        tiles.sort_by_key(|t| (t.pos.r, t.pos.c));
-        Self {
-            dim: self.dim,
-            tiles,
-        }
+        self.tiles.sort_by_key(|t| (t.pos.r, t.pos.c));
     }
 
     /// Hashable canonical representation used for content-addressed IDs.

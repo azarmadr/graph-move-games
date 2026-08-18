@@ -3,6 +3,8 @@
 
 port := "26141"
 base_path := "/"
+export BASE_PATH := base_path
+export PORT := port
 
 # List available commands
 default:
@@ -25,8 +27,8 @@ test:
     cargo test --manifest-path artifacts/game-2048/wasm-game/Cargo.toml
 
 # Run the Vite dev server (builds wasm first; PORT/BASE_PATH defaults match .replit)
-dev: build-wasm
-    PORT={{port}} BASE_PATH={{base_path}} pnpm --filter @workspace/game-2048 run dev
+dev:
+    pnpm --filter @workspace/game-2048 run dev
 
 # Typecheck the game-2048 app only
 typecheck:
@@ -38,11 +40,11 @@ check:
 
 # Production build: wasm engine, typecheck, then vite build
 build: build-wasm typecheck
-    PORT={{port}} BASE_PATH={{base_path}} pnpm --filter @workspace/game-2048 run build
+    PORT={{port}} pnpm --filter @workspace/game-2048 run build
 
 # Preview the production build
 serve:
-    PORT={{port}} BASE_PATH={{base_path}} pnpm --filter @workspace/game-2048 run serve
+    PORT={{port}} pnpm --filter @workspace/game-2048 run serve
 
 # Remove build artifacts
 clean:

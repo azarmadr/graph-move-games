@@ -31,7 +31,8 @@ impl Engine {
         let rows = config.rows;
         let cols = config.cols;
 
-        let start_board = Board::with_tiles(rows, cols, vec![Cell::new(0, 0, 2)]);
+        let mut start_board = Board::with_dim(rows, cols);
+        start_board.spawn(&config.spawn_config)?;
         self.create_game_with_board_inner(game_id, start_board, config.clone())
     }
 
@@ -113,11 +114,8 @@ impl Engine {
         let (merge_board_id, _) = self.graph.get_or_create_node(current_board.clone());
 
         // Step 4/5: spawn
-        let spawn_cells = current_board.sample_spawn(&game.config.spawn_config)?;
-        let spawned_board = spawn_cells.iter().fold(current_board.clone(), |b, cell| {
-            b.set(cell.pos.r, cell.pos.c, cell.tile)
-        });
-        let (spawn_board_id, _) = self.graph.get_or_create_node(spawned_board.clone());
+        let spawn_cells = current_board.spawn(&game.config.spawn_config)?;
+        let (spawn_board_id, _) = self.graph.get_or_create_node(current_board.clone());
 
         // Step 6: edges
         self.graph
@@ -126,7 +124,7 @@ impl Engine {
             .insert_edge(merge_board_id, spawn_board_id, Edge::Spawn(spawn_cells));
 
         // Step 7: termination check on the spawned board
-        let is_terminated = spawned_board.valid_moves().is_empty();
+        let is_terminated = current_board.valid_moves().is_empty();
 
         // Step 8: update game instance
         game.score += merge_score as u64;
@@ -203,7 +201,8 @@ mod tests {
     #[test]
     fn test_valid_move_creates_two_nodes_and_two_edges() {
         let mut engine = Engine::new();
-        let state = engine.create_game(&GameConfig::default()).unwrap();
+        let board = Board::with_tiles(3, 3, vec![Cell::new(0, 0, 2)]);
+        let state = engine._create_game_with_board(board.clone()).unwrap();
         let current_id = state.game.current_board_id;
 
         // Board: single tile at (0,0). Move Left is invalid (no change).
@@ -238,8 +237,9 @@ mod tests {
     #[test]
     fn test_canonical_board_and_edge_deduplication() {
         let mut engine = Engine::new();
-        let first = engine.create_game(&GameConfig::default()).unwrap();
-        let second = engine.create_game(&GameConfig::default()).unwrap();
+        let board = Board::with_tiles(3, 3, vec![Cell::new(0, 0, 2)]);
+        let first = engine._create_game_with_board(board.clone()).unwrap();
+        let second = engine._create_game_with_board(board).unwrap();
 
         assert_eq!(first.game.source_board_id, second.game.source_board_id);
         assert_eq!(engine.graph.graph.node_count(), 1);
@@ -266,6 +266,7 @@ mod tests {
                 .count(),
             1
         );
+        println!("Graph nodes: {:?}", engine.graph.graph);
         assert!(engine.graph.graph.node_count() >= 3);
         assert!(engine.graph.graph.edge_count() >= 3);
     }
@@ -273,7 +274,8 @@ mod tests {
     #[test]
     fn test_invalid_move_no_change() {
         let mut engine = Engine::new();
-        let state = engine.create_game(&GameConfig::default()).unwrap();
+        let board = Board::with_tiles(3, 3, vec![Cell::new(0, 0, 2)]);
+        let state = engine._create_game_with_board(board.clone()).unwrap();
         let current_id = state.game.current_board_id;
 
         // Move Left from (0,0) is invalid because the tile is already at the left edge.
@@ -288,7 +290,8 @@ mod tests {
     #[test]
     fn test_export_import_roundtrip() {
         let mut engine = Engine::new();
-        let state = engine.create_game(&GameConfig::default()).unwrap();
+        let board = Board::with_tiles(3, 3, vec![Cell::new(0, 0, 2)]);
+        let state = engine._create_game_with_board(board.clone()).unwrap();
         let game_id = state.game.id;
 
         // Make a move so we have some graph structure

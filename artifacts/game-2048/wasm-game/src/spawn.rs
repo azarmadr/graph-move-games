@@ -20,6 +20,13 @@ impl Board {
 
         Ok(vec![Cell::new(pos.r, pos.c, tile)])
     }
+    pub(crate) fn spawn(&mut self, config: &SpawnConfig) -> Result<Vec<Cell>, String> {
+        let spawn_cells = self.sample_spawn(config)?;
+        for cell in &spawn_cells {
+            self.set(cell.pos.r, cell.pos.c, cell.tile);
+        }
+        Ok(spawn_cells)
+    }
 }
 
 fn random_item<T: Clone>(items: &[T]) -> Result<T, String> {
@@ -64,6 +71,21 @@ mod tests {
         crate::types::Pos,
         std::collections::{HashMap, HashSet},
     };
+
+    #[test]
+    fn spawns_in_empty_cell() {
+        let mut board = Board::with_dim(3, 3);
+        println!("{board:?}");
+        let config = SpawnConfig {
+            spawns: HashMap::from([(2, 1)]),
+        };
+
+        let result = board.spawn(&config).unwrap();
+        println!("{board:?}");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].tile, 2);
+        assert!(!board.empty_positions().contains(&result[0].pos));
+    }
 
     #[test]
     fn samples_one_configured_tile_in_an_empty_cell() {
