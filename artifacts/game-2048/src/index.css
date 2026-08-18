@@ -114,6 +114,12 @@ body {
   background: #fbf8f0;
 }
 
+.graph-infinite-container {
+  position: relative;
+  overflow: auto;
+  min-height: 400px;
+}
+
 .graph-canvas {
   position: relative;
   min-width: 100%;
