@@ -9,12 +9,15 @@
 
 ## 2. Async Graph Loading (Phase 2)
 
-- [ ] 2.1 Add skeleton/loading state to `<graph-tab>`: render skeleton placeholder immediately on connection
-- [ ] 2.2 Make `openGraphVisualization()` async: call getGraph()/exportGraph() via Promise.all without blocking UI
-- [ ] 2.3 Schedule dagre layout via setTimeout(0) or requestAnimationFrame after data arrives
-- [ ] 2.4 Render graph nodes/edges in a single batch after layout completes (no incremental rendering)
-- [ ] 2.5 Add loading state transitions: skeleton → loading → ready → error
-- [ ] 2.6 Add error handling: catch fetch/layout failures and show error state
+- [x] 2.1 Add skeleton/loading state to `<graph-tab>`: render skeleton placeholder immediately on connection
+- [x] 2.2 Make `openGraphVisualization()` async: call getGraph()/exportGraph() via Promise.all without blocking UI
+- [x] 2.3 Schedule dagre layout via setTimeout(0) or requestAnimationFrame after data arrives
+- [x] 2.4 Render graph nodes/edges in a single batch after layout completes (no incremental rendering)
+- [x] 2.5 Add loading state transitions: skeleton → loading → ready → error
+- [x] 2.6 Add error handling: catch fetch/layout failures and show error state
+
+## 2.7 Fix graph viewport:
+- [ ] add CSS for `.graph-infinite-container` with overflow: auto so dagre layout is scrollable
 
 ## 3. Infinite Canvas (Phase 3)
 

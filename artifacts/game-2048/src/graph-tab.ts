@@ -111,9 +111,10 @@ function makeDagLayout(graphData: GraphData): DagLayout {
   });
 
   const graphSize = layout.graph();
+  const halfNode = NODE_SIZE / 2;
   return {
-    width: Math.max(graphSize.width ?? 0, 320),
-    height: Math.max(graphSize.height ?? 0, 320),
+    width: Math.max((graphSize.width ?? 0) + halfNode, 320),
+    height: Math.max((graphSize.height ?? 0) + halfNode, 320),
     nodes: positions,
     edges: positionedEdges,
   };
@@ -156,13 +157,20 @@ export class GraphTabElement extends HTMLElement {
   private _activeGameId: string | undefined;
   private _loadingState: "skeleton" | "loading" | "ready" | "error" =
     "skeleton";
+  private _pendingLayout: DagLayout | null = null;
+  private _layoutScheduled = false;
   private selectedId: string | null = null;
   private hoveredId: string | null = null;
 
   set graphData(value: GraphData | null) {
     this._graphData = value;
-    this._loadingState = value ? "ready" : "skeleton";
-    this.render();
+    if (value) {
+      this._loadingState = "loading";
+      this.scheduleLayout();
+    } else {
+      this._loadingState = "skeleton";
+      this.render();
+    }
   }
 
   get graphData(): GraphData | null {
@@ -195,12 +203,42 @@ export class GraphTabElement extends HTMLElement {
     this.render();
   }
 
+  private scheduleLayout() {
+    if (this._layoutScheduled) return;
+    this._layoutScheduled = true;
+
+    requestAnimationFrame(() => {
+      this._layoutScheduled = false;
+      if (!this._graphData) return;
+
+      try {
+        this._pendingLayout = makeDagLayout(this._graphData);
+        this._loadingState = "ready";
+        this.render();
+      } catch (e) {
+        console.error("dagre layout failed:", e);
+        this._loadingState = "error";
+        this.render();
+      }
+    });
+  }
+
   private render() {
     if (this._loadingState === "skeleton") {
       this.innerHTML = `
         <div class="graph-skeleton">
           <div class="graph-skeleton-spinner"></div>
           <div class="graph-skeleton-text">Loading graph...</div>
+        </div>
+      `;
+      return;
+    }
+
+    if (this._loadingState === "loading") {
+      this.innerHTML = `
+        <div class="graph-skeleton">
+          <div class="graph-skeleton-spinner"></div>
+          <div class="graph-skeleton-text">Computing layout...</div>
         </div>
       `;
       return;
@@ -222,7 +260,7 @@ export class GraphTabElement extends HTMLElement {
       return;
     }
 
-    const layout = makeDagLayout(graphData);
+    const layout = this._pendingLayout ?? makeDagLayout(graphData);
     const nodes = graphData.nodes;
     const nodeCount = Object.keys(nodes).length;
     const edgeCount = Object.keys(graphData.edges).length;
