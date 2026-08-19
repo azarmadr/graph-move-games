@@ -1,6 +1,7 @@
 import dagre from "@dagrejs/dagre";
 import ForceGraph from "force-graph";
 import type { GraphData, Edge, GameInstance, Board } from "./wasmBridge";
+import { GraphControlsElement } from "./graph-controls";
 
 type Point = { x: number; y: number };
 
@@ -14,6 +15,7 @@ type DagLayout = {
 const NODE_SIZE = 104;
 const DOT_THRESHOLD = 0.5;
 const DOT_RADIUS = 12;
+const THRESHOLD_BAND = 0.15;
 
 function nodeKey(boardId: string) {
   return `board:${boardId}`;
@@ -61,6 +63,10 @@ function dominantTileColor(board: Board): string {
 
 function edgeColor(edge: Edge) {
   return edge.kind.Move ? "#4cc9f0" : "#f72585";
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * Math.max(0, Math.min(1, t));
 }
 
 function makeDagLayout(graphData: GraphData): DagLayout {
@@ -135,6 +141,88 @@ function makeDagLayout(graphData: GraphData): DagLayout {
   };
 }
 
+class ThumbnailCache {
+  private _cache = new Map<string, ImageBitmap>();
+  private _pending = new Map<string, Promise<ImageBitmap>>();
+
+  get(boardId: string, board: Board): ImageBitmap | null {
+    return this._cache.get(boardId) ?? null;
+  }
+
+  render(boardId: string, board: Board): ImageBitmap | null {
+    if (this._cache.has(boardId)) return this._cache.get(boardId)!;
+    if (this._pending.has(boardId)) return null;
+
+    const offscreen = document.createElement("canvas");
+    offscreen.width = NODE_SIZE;
+    offscreen.height = NODE_SIZE;
+    const ctx = offscreen.getContext("2d");
+    if (!ctx) return null;
+
+    const [rows, cols] = board.dim;
+    const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
+    for (const cell of board.tiles) {
+      if (grid[cell.pos.r]?.[cell.pos.c] !== undefined) {
+        grid[cell.pos.r][cell.pos.c] = cell.tile;
+      }
+    }
+
+    const gap = 3;
+    const padding = 4;
+    const innerW = NODE_SIZE - padding * 2;
+    const innerH = NODE_SIZE - padding * 2;
+    const cellW = (innerW - gap * (cols - 1)) / cols;
+    const cellH = (innerH - gap * (rows - 1)) / rows;
+
+    ctx.fillStyle = "#8f7a66";
+    ctx.beginPath();
+    ctx.roundRect(0, 0, NODE_SIZE, NODE_SIZE, 12);
+    ctx.fill();
+
+    ctx.fillStyle = "#bbada0";
+    ctx.beginPath();
+    ctx.roundRect(padding, padding, innerW, innerH, 6);
+    ctx.fill();
+
+    const fontScale = Math.max(8, Math.min(15, cellW * 0.65));
+    ctx.font = `800 ${fontScale}px "Clear Sans", Arial, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const value = grid[r][c];
+        const colors = TILE_COLORS[value] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
+        const cx = padding + c * (cellW + gap);
+        const cy = padding + r * (cellH + gap);
+
+        ctx.fillStyle = colors.bg;
+        ctx.beginPath();
+        ctx.roundRect(cx, cy, cellW, cellH, 3);
+        ctx.fill();
+
+        if (value > 0) {
+          ctx.fillStyle = colors.fg;
+          ctx.fillText(String(value), cx + cellW / 2, cy + cellH / 2);
+        }
+      }
+    }
+
+    const promise = createImageBitmap(offscreen);
+    this._pending.set(boardId, promise);
+    promise.then((bmp) => {
+      this._cache.set(boardId, bmp);
+      this._pending.delete(boardId);
+    });
+    return null;
+  }
+
+  clear() {
+    this._cache.clear();
+    this._pending.clear();
+  }
+}
+
 export class GraphTabElement extends HTMLElement {
   private _graphData: GraphData | null = null;
   private _games: GameInstance[] = [];
@@ -154,6 +242,8 @@ export class GraphTabElement extends HTMLElement {
 
   private _edgeWaypoints: Map<string, Point[]> = new Map();
   private _nodePositionMap: Map<string, { x: number; y: number }> = new Map();
+  private _thumbnailCache = new ThumbnailCache();
+  private _graphControls: GraphControlsElement | null = null;
 
   set graphData(value: GraphData | null) {
     this._graphData = value;
@@ -290,6 +380,7 @@ export class GraphTabElement extends HTMLElement {
     }
     this.innerHTML = "";
     this._forceGraph = null;
+    this._thumbnailCache.clear();
 
     const container = document.createElement("div");
     container.className = "graph-infinite-canvas-host";
@@ -299,6 +390,26 @@ export class GraphTabElement extends HTMLElement {
     inspector.className = "graph-inspector";
     inspector.innerHTML = `<summary>?</summary><div class="graph-inspector-body"><p>Select a node or edge to inspect.</p></div>`;
     this.appendChild(inspector);
+
+    this._graphControls = document.createElement(
+      "graph-controls",
+    ) as GraphControlsElement;
+    this.appendChild(this._graphControls);
+    this._graphControls.markers = this.buildNavMarkers();
+
+    this._graphControls.addEventListener("navigate-node", ((e: CustomEvent) => {
+      this.centerOnNode(e.detail.nodeId);
+    }) as EventListener);
+
+    this._graphControls.addEventListener("zoom-change", ((e: CustomEvent) => {
+      this.zoomBy(e.detail.direction);
+    }) as EventListener);
+
+    this._graphControls.addEventListener("physics-toggle", (() => {
+      this.togglePhysics();
+      if (this._graphControls)
+        this._graphControls.physicsEnabled = this.physicsEnabled;
+    }) as EventListener);
 
     this._edgeWaypoints.clear();
     this._nodePositionMap.clear();
@@ -341,7 +452,6 @@ export class GraphTabElement extends HTMLElement {
       .linkTarget("target")
       .width(container.clientWidth || 800)
       .height(container.clientHeight || 600)
-      .backgroundColor("#faf8ef")
       .nodeCanvasObjectMode(() => "replace")
       .nodeCanvasObject(this.renderNodeCanvas.bind(this))
       .nodePointerAreaPaint(this.renderNodePointer.bind(this))
@@ -385,103 +495,120 @@ export class GraphTabElement extends HTMLElement {
   ) {
     const board: Board = node.board;
     const isSelected = this.selectedId === node.id;
-    const isHovered = this.hoveredId === node.id;
-    const isCurrent =
-      node.boardId === this._activeGameId ||
-      this._games.some(
-        (g) =>
-          g.id === this._activeGameId && g.current_board_id === node.boardId,
-      );
+    const isCurrent = this._games.some(
+      (g) => g.current_board_id === node.boardId,
+    );
     const isSource = this._games.some(
       (g) => g.source_board_id === node.boardId,
     );
 
-    if (globalScale < DOT_THRESHOLD) {
+    const scale = globalScale;
+    const halfSize = NODE_SIZE / 2;
+
+    if (scale < DOT_THRESHOLD - THRESHOLD_BAND) {
       const color = dominantTileColor(board);
       ctx.beginPath();
       ctx.arc(node.x, node.y, DOT_RADIUS, 0, 2 * Math.PI);
       ctx.fillStyle = color;
       ctx.fill();
-
-      if (isSelected) {
-        ctx.strokeStyle = "#4cc9f0";
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-      } else if (isCurrent) {
-        ctx.strokeStyle = "#f72585";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      } else if (isSource) {
-        ctx.strokeStyle = "#4cc9f0";
-        ctx.lineWidth = 1.5;
+      if (isSelected || isCurrent || isSource) {
+        ctx.strokeStyle = isSelected
+          ? "#4cc9f0"
+          : isCurrent
+            ? "#f72585"
+            : "#4cc9f0";
+        ctx.lineWidth = isSelected ? 2.5 : isCurrent ? 2 : 1.5;
         ctx.stroke();
       }
+    } else if (scale > DOT_THRESHOLD + THRESHOLD_BAND) {
+      this.drawThumbnail(node, ctx, board, isSelected, isCurrent, isSource);
     } else {
-      const [rows, cols] = board.dim;
-      const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
-      for (const cell of board.tiles) {
-        if (grid[cell.pos.r]?.[cell.pos.c] !== undefined) {
-          grid[cell.pos.r][cell.pos.c] = cell.tile;
-        }
-      }
+      const t =
+        (scale - (DOT_THRESHOLD - THRESHOLD_BAND)) / (THRESHOLD_BAND * 2);
+      const radius = lerp(DOT_RADIUS, halfSize, t);
+      const color = dominantTileColor(board);
 
-      const gap = 3;
-      const padding = 4;
-      const innerW = NODE_SIZE - padding * 2;
-      const innerH = NODE_SIZE - padding * 2;
-      const cellW = (innerW - gap * (cols - 1)) / cols;
-      const cellH = (innerH - gap * (rows - 1)) / rows;
-
-      const x0 = node.x - NODE_SIZE / 2;
-      const y0 = node.y - NODE_SIZE / 2;
-
-      ctx.fillStyle = "#8f7a66";
       ctx.beginPath();
-      ctx.roundRect(x0, y0, NODE_SIZE, NODE_SIZE, 12);
+      ctx.arc(node.x, node.y, radius, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
       ctx.fill();
 
-      if (isSelected) {
-        ctx.strokeStyle = "#4cc9f0";
-        ctx.lineWidth = 2.5;
-        ctx.stroke();
-      } else if (isCurrent) {
-        ctx.strokeStyle = "#f72585";
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      } else if (isSource) {
-        ctx.strokeStyle = "#4cc9f0";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-
-      ctx.fillStyle = "#bbada0";
-      ctx.beginPath();
-      ctx.roundRect(x0 + padding, y0 + padding, innerW, innerH, 6);
-      ctx.fill();
-
-      const fontScale = Math.max(8, Math.min(15, cellW * 0.65));
-      ctx.font = `800 ${fontScale}px "Clear Sans", Arial, sans-serif`;
-      ctx.textAlign = "center";
-      ctx.textBaseline = "middle";
-
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          const value = grid[r][c];
-          const colors = TILE_COLORS[value] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
-          const cx = x0 + padding + c * (cellW + gap);
-          const cy = y0 + padding + r * (cellH + gap);
-
-          ctx.fillStyle = colors.bg;
-          ctx.beginPath();
-          ctx.roundRect(cx, cy, cellW, cellH, 3);
-          ctx.fill();
-
-          if (value > 0) {
-            ctx.fillStyle = colors.fg;
-            ctx.fillText(String(value), cx + cellW / 2, cy + cellH / 2);
+      if (t > 0.3) {
+        const gridAlpha = (t - 0.3) / 0.7;
+        const [rows, cols] = board.dim;
+        const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
+        for (const cell of board.tiles) {
+          if (grid[cell.pos.r]?.[cell.pos.c] !== undefined) {
+            grid[cell.pos.r][cell.pos.c] = cell.tile;
           }
         }
+        const innerR = radius * 0.85;
+        const cellSize = (innerR * 2) / Math.max(rows, cols);
+        const gap = cellSize * 0.12;
+
+        ctx.globalAlpha = gridAlpha;
+        for (let r = 0; r < rows; r++) {
+          for (let c = 0; c < cols; c++) {
+            const value = grid[r][c];
+            const tc = TILE_COLORS[value] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
+            const cx = node.x - innerR + c * cellSize + gap;
+            const cy = node.y - innerR + r * cellSize + gap;
+            const s = cellSize - gap * 2;
+
+            ctx.fillStyle = tc.bg;
+            ctx.beginPath();
+            ctx.roundRect(cx, cy, s, s, 2);
+            ctx.fill();
+          }
+        }
+        ctx.globalAlpha = 1;
       }
+
+      if (isSelected || isCurrent || isSource) {
+        ctx.strokeStyle = isSelected
+          ? "#4cc9f0"
+          : isCurrent
+            ? "#f72585"
+            : "#4cc9f0";
+        ctx.lineWidth = isSelected ? 2.5 : isCurrent ? 2 : 1.5;
+        ctx.stroke();
+      }
+    }
+  }
+
+  private drawThumbnail(
+    node: any,
+    ctx: CanvasRenderingContext2D,
+    board: Board,
+    isSelected: boolean,
+    isCurrent: boolean,
+    isSource: boolean,
+  ) {
+    const bmp = this._thumbnailCache.get(node.boardId, board);
+    if (bmp) {
+      ctx.drawImage(bmp, node.x - NODE_SIZE / 2, node.y - NODE_SIZE / 2);
+    } else {
+      this._thumbnailCache.render(node.boardId, board);
+      ctx.fillStyle = "#8f7a66";
+      ctx.beginPath();
+      ctx.roundRect(
+        node.x - NODE_SIZE / 2,
+        node.y - NODE_SIZE / 2,
+        NODE_SIZE,
+        NODE_SIZE,
+        12,
+      );
+      ctx.fill();
+    }
+
+    if (isSelected || isCurrent || isSource) {
+      ctx.strokeStyle = isSelected
+        ? "#4cc9f0"
+        : isCurrent
+          ? "#f72585"
+          : "#4cc9f0";
+      ctx.lineWidth = isSelected ? 2.5 : isCurrent ? 2 : 1.5;
+      ctx.stroke();
     }
   }
 
@@ -611,6 +738,7 @@ export class GraphTabElement extends HTMLElement {
   }
 
   private handleZoom({ k }: { k: number; x: number; y: number }) {
+    if (this._graphControls) this._graphControls.zoom = k;
     this.dispatchEvent(
       new CustomEvent("zoom-level", {
         detail: { zoom: k },
@@ -687,6 +815,85 @@ export class GraphTabElement extends HTMLElement {
           : ""
       }
     `;
+  }
+
+  private buildNavMarkers(): Array<{ id: string; label: string }> {
+    const markers: Array<{ id: string; label: string }> = [];
+    const graph = this._graphData;
+    if (!graph) return markers;
+
+    if (this._activeGameId) {
+      const game = this._games.find((g) => g.id === this._activeGameId);
+      if (game) {
+        markers.push({
+          id: nodeKey(game.source_board_id),
+          label: "Root",
+        });
+      }
+    }
+
+    const roots = new Set<string>();
+    for (const game of this._games) {
+      roots.add(game.source_board_id);
+    }
+    for (const rootId of roots) {
+      const key = nodeKey(rootId);
+      if (!markers.some((m) => m.id === key)) {
+        markers.push({ id: key, label: "Root" });
+      }
+    }
+
+    const tails = new Set<string>();
+    for (const game of this._games) {
+      if (!tails.has(game.current_board_id)) {
+        tails.add(game.current_board_id);
+        const key = nodeKey(game.current_board_id);
+        if (!markers.some((m) => m.id === key)) {
+          const suffix = this._games.length > 1 ? ` (${game.score})` : "";
+          markers.push({ id: key, label: `Tail${suffix}` });
+        }
+      }
+    }
+
+    const adj = new Map<string, string[]>();
+    for (const edge of Object.values(graph.edges)) {
+      const from = edge.from;
+      if (!adj.has(from)) adj.set(from, []);
+      adj.get(from)!.push(edge.to);
+    }
+
+    const depth = new Map<string, number>();
+    const queue: string[] = [...roots];
+    for (const r of queue) depth.set(r, 0);
+
+    while (queue.length > 0) {
+      const curr = queue.shift()!;
+      const d = depth.get(curr) ?? 0;
+      for (const next of adj.get(curr) ?? []) {
+        const prev = depth.get(next);
+        if (prev === undefined || d + 1 > prev) {
+          depth.set(next, d + 1);
+          queue.push(next);
+        }
+      }
+    }
+
+    let deepestId: string | null = null;
+    let maxDepth = -1;
+    for (const [id, d] of depth) {
+      if (d > maxDepth) {
+        maxDepth = d;
+        deepestId = id;
+      }
+    }
+    if (deepestId && maxDepth > 0) {
+      const key = nodeKey(deepestId);
+      if (!markers.some((m) => m.id === key)) {
+        markers.push({ id: key, label: `Deepest (${maxDepth})` });
+      }
+    }
+
+    return markers;
   }
 
   private render() {
