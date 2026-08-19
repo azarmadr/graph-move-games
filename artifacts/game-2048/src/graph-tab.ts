@@ -1,4 +1,5 @@
 import dagre from "@dagrejs/dagre";
+import ForceGraph from "force-graph";
 import type { GraphData, Edge, GameInstance, Board } from "./wasmBridge";
 
 type Point = { x: number; y: number };
@@ -11,6 +12,8 @@ type DagLayout = {
 };
 
 const NODE_SIZE = 104;
+const DOT_THRESHOLD = 0.5;
+const DOT_RADIUS = 12;
 
 function nodeKey(boardId: string) {
   return `board:${boardId}`;
@@ -47,6 +50,18 @@ const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
   1024: { bg: "#edc53f", fg: "#f9f6f2" },
   2048: { bg: "#edc22e", fg: "#f9f6f2" },
 };
+
+function dominantTileColor(board: Board): string {
+  let maxTile = 0;
+  for (const cell of board.tiles) {
+    if (cell.tile > maxTile) maxTile = cell.tile;
+  }
+  return (TILE_COLORS[maxTile] ?? { bg: "#cdc1b4" }).bg;
+}
+
+function edgeColor(edge: Edge) {
+  return edge.kind.Move ? "#4cc9f0" : "#f72585";
+}
 
 function makeDagLayout(graphData: GraphData): DagLayout {
   const layout = new dagre.graphlib.Graph({
@@ -120,37 +135,6 @@ function makeDagLayout(graphData: GraphData): DagLayout {
   };
 }
 
-function edgeColor(edge: Edge) {
-  return edge.kind.Move ? "#4cc9f0" : "#f72585";
-}
-
-function edgePath(points: Point[]) {
-  if (points.length === 0) return "";
-  return points
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`)
-    .join(" ");
-}
-
-function boardThumbnail(node: Board): string {
-  const [rows, cols] = node.dim;
-  const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
-  node.tiles.forEach((cell) => {
-    if (grid[cell.pos.r]?.[cell.pos.c] !== undefined) {
-      grid[cell.pos.r][cell.pos.c] = cell.tile;
-    }
-  });
-
-  let cells = "";
-  grid.forEach((row, rowIndex) => {
-    row.forEach((value, colIndex) => {
-      const colors = TILE_COLORS[value] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
-      cells += `<span class="board-thumbnail-cell" style="background:${colors.bg};color:${colors.fg};">${value || ""}</span>`;
-    });
-  });
-
-  return `<span class="board-thumbnail" style="grid-template-columns:repeat(${cols}, minmax(0, 1fr));grid-template-rows:repeat(${rows}, minmax(0, 1fr));">${cells}</span>`;
-}
-
 export class GraphTabElement extends HTMLElement {
   private _graphData: GraphData | null = null;
   private _games: GameInstance[] = [];
@@ -162,15 +146,14 @@ export class GraphTabElement extends HTMLElement {
   private selectedId: string | null = null;
   private hoveredId: string | null = null;
 
-  private _panX = 0;
-  private _panY = 0;
-  private _zoom = 1;
-  private _isPanning = false;
-  private _panStart = { x: 0, y: 0 };
-  private _panOffset = { x: 0, y: 0 };
-  private _onMouseMove: ((e: MouseEvent) => void) | null = null;
-  private _onMouseUp: (() => void) | null = null;
-  private _panZoomBound = false;
+  private _forceGraph: any = null;
+  private _physicsEnabled = false;
+  private _mouseX = 0;
+  private _mouseY = 0;
+  private _hoverCard: HTMLElement | null = null;
+
+  private _edgeWaypoints: Map<string, Point[]> = new Map();
+  private _nodePositionMap: Map<string, { x: number; y: number }> = new Map();
 
   set graphData(value: GraphData | null) {
     this._graphData = value;
@@ -189,7 +172,7 @@ export class GraphTabElement extends HTMLElement {
 
   set games(value: GameInstance[]) {
     this._games = value;
-    this.render();
+    if (this._forceGraph) this.updateInspector();
   }
 
   get games(): GameInstance[] {
@@ -198,7 +181,7 @@ export class GraphTabElement extends HTMLElement {
 
   set activeGameId(value: string | undefined) {
     this._activeGameId = value;
-    this.render();
+    if (this._forceGraph) this.updateInspector();
   }
 
   get activeGameId(): string | undefined {
@@ -210,7 +193,7 @@ export class GraphTabElement extends HTMLElement {
   }
 
   get zoom(): number {
-    return this._zoom;
+    return this._forceGraph?.zoom() ?? 1;
   }
 
   connectedCallback() {
@@ -218,123 +201,63 @@ export class GraphTabElement extends HTMLElement {
   }
 
   disconnectedCallback() {
-    if (this._onMouseMove)
-      window.removeEventListener("mousemove", this._onMouseMove);
-    if (this._onMouseUp) window.removeEventListener("mouseup", this._onMouseUp);
+    this.removeHoverCard();
   }
 
-  private setupPanZoom() {
-    const container = this.querySelector<HTMLElement>(
-      ".graph-infinite-container",
-    );
-    if (!container) return;
-
-    container.addEventListener("mousedown", (e) => {
-      if (e.button !== 0) return;
-      this._isPanning = true;
-      this._panStart = { x: e.clientX, y: e.clientY };
-      this._panOffset = { x: this._panX, y: this._panY };
-      container.classList.add("grabbing");
-    });
-
-    container.addEventListener(
-      "wheel",
-      (e) => {
-        e.preventDefault();
-        const rect = container.getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
-
-        const prevZoom = this._zoom;
-        const delta = e.deltaY > 0 ? 0.9 : 1.1;
-        this._zoom = Math.max(0.2, Math.min(3, this._zoom * delta));
-
-        this._panX = mouseX - (mouseX - this._panX) * (this._zoom / prevZoom);
-        this._panY = mouseY - (mouseY - this._panY) * (this._zoom / prevZoom);
-        this.applyTransform();
-      },
-      { passive: false },
-    );
-
-    if (!this._panZoomBound) {
-      this._panZoomBound = true;
-
-      this._onMouseMove = (e: MouseEvent) => {
-        if (!this._isPanning) return;
-        this._panX = this._panOffset.x + (e.clientX - this._panStart.x);
-        this._panY = this._panOffset.y + (e.clientY - this._panStart.y);
-        this.applyTransform();
-      };
-      window.addEventListener("mousemove", this._onMouseMove);
-
-      this._onMouseUp = () => {
-        this._isPanning = false;
-        const c = this.querySelector<HTMLElement>(".graph-infinite-container");
-        c?.classList.remove("grabbing");
-      };
-      window.addEventListener("mouseup", this._onMouseUp);
-    }
+  centerOnNode(nodeId: string) {
+    if (!this._forceGraph || !this._pendingLayout) return;
+    const position = this._pendingLayout.nodes[nodeId];
+    if (!position) return;
+    this._forceGraph.centerAt(position.x, position.y, 400);
   }
 
-  private applyTransform() {
-    const canvas = this.querySelector<HTMLElement>(".graph-canvas");
-    if (canvas) {
-      canvas.style.transform = `translate(${this._panX}px, ${this._panY}px) scale(${this._zoom})`;
+  zoomBy(direction: "in" | "out") {
+    if (!this._forceGraph) return;
+    const factor = direction === "in" ? 1.2 : 0.8;
+    const currentZoom = this._forceGraph.zoom();
+    this._forceGraph.zoom(
+      Math.max(0.2, Math.min(3, currentZoom * factor)),
+      200,
+    );
+  }
+
+  togglePhysics() {
+    if (!this._forceGraph || !this._graphData) return;
+    this._physicsEnabled = !this._physicsEnabled;
+
+    if (this._physicsEnabled) {
+      for (const node of this._forceGraph.graphData().nodes) {
+        node.fx = undefined;
+        node.fy = undefined;
+      }
+      const charge = this._forceGraph.d3Force("charge");
+      if (charge) charge.strength(-120);
+      const link = this._forceGraph.d3Force("link");
+      if (link) link.distance(100);
+      this._forceGraph.enableNodeDrag(true).d3ReheatSimulation();
+    } else {
+      for (const node of this._forceGraph.graphData().nodes) {
+        node.fx = node.x;
+        node.fy = node.y;
+      }
+      this._forceGraph
+        .d3Force("charge", null)
+        .d3Force("link", null)
+        .d3Force("center", null)
+        .enableNodeDrag(false);
     }
+
     this.dispatchEvent(
-      new CustomEvent("zoom-level", {
-        detail: { zoom: this._zoom },
+      new CustomEvent("physics-mode", {
+        detail: { enabled: this._physicsEnabled },
         bubbles: true,
         composed: true,
       }),
     );
   }
 
-  centerOnNode(nodeId: string) {
-    if (!this._pendingLayout) return;
-    const position = this._pendingLayout.nodes[nodeId];
-    if (!position) return;
-    const container = this.querySelector<HTMLElement>(
-      ".graph-infinite-container",
-    );
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    this._panX = rect.width / 2 - position.x * this._zoom;
-    this._panY = rect.height / 2 - position.y * this._zoom;
-    this.applyTransform();
-  }
-
-  zoomBy(direction: "in" | "out") {
-    const factor = direction === "in" ? 1.2 : 0.8;
-    const container = this.querySelector<HTMLElement>(
-      ".graph-infinite-container",
-    );
-    if (!container) return;
-    const rect = container.getBoundingClientRect();
-    const centerX = rect.width / 2;
-    const centerY = rect.height / 2;
-    const prevZoom = this._zoom;
-    this._zoom = Math.max(0.2, Math.min(3, this._zoom * factor));
-    this._panX = centerX - (centerX - this._panX) * (this._zoom / prevZoom);
-    this._panY = centerY - (centerY - this._panY) * (this._zoom / prevZoom);
-    this.applyTransform();
-  }
-
-  private centerOnGraph() {
-    if (!this._pendingLayout) return;
-    const container = this.querySelector<HTMLElement>(
-      ".graph-infinite-container",
-    );
-    if (!container) return;
-
-    const rect = container.getBoundingClientRect();
-    const graphW = this._pendingLayout.width;
-    const graphH = this._pendingLayout.height;
-
-    this._zoom = Math.min(rect.width / graphW, rect.height / graphH, 1);
-    this._panX = (rect.width - graphW * this._zoom) / 2;
-    this._panY = (rect.height - graphH * this._zoom) / 2;
-    this.applyTransform();
+  get physicsEnabled(): boolean {
+    return this._physicsEnabled;
   }
 
   private scheduleLayout() {
@@ -348,14 +271,422 @@ export class GraphTabElement extends HTMLElement {
       try {
         this._pendingLayout = makeDagLayout(this._graphData);
         this._loadingState = "ready";
-        this.render();
-        requestAnimationFrame(() => this.centerOnGraph());
+        this.initForceGraph();
       } catch (e) {
         console.error("dagre layout failed:", e);
         this._loadingState = "error";
         this.render();
       }
     });
+  }
+
+  private initForceGraph() {
+    const layout = this._pendingLayout;
+    const graphData = this._graphData;
+    if (!layout || !graphData) return;
+
+    if (this._forceGraph) {
+      this._forceGraph._destructor();
+    }
+    this.innerHTML = "";
+    this._forceGraph = null;
+
+    const container = document.createElement("div");
+    container.className = "graph-infinite-canvas-host";
+    this.appendChild(container);
+
+    const inspector = document.createElement("details");
+    inspector.className = "graph-inspector";
+    inspector.innerHTML = `<summary>?</summary><div class="graph-inspector-body"><p>Select a node or edge to inspect.</p></div>`;
+    this.appendChild(inspector);
+
+    this._edgeWaypoints.clear();
+    this._nodePositionMap.clear();
+
+    const nodes = Object.keys(graphData.nodes).map((board_id) => {
+      const pos = layout.nodes[nodeKey(board_id)];
+      const nodeData = graphData.nodes[board_id];
+      if (pos) this._nodePositionMap.set(nodeKey(board_id), pos);
+      return {
+        id: nodeKey(board_id),
+        boardId: board_id,
+        board: nodeData,
+        x: pos?.x ?? 0,
+        y: pos?.y ?? 0,
+      };
+    });
+
+    const links: any[] = [];
+    for (const edge_id of Object.keys(graphData.edges)) {
+      const edge = graphData.edges[edge_id];
+      const sourceKey = nodeKey(edge.from);
+      const targetKey = nodeKey(edge.to);
+      const pts = layout.edges.find((e) => e.edge_id === edge_id)?.points ?? [];
+      this._edgeWaypoints.set(edgeKey(edge_id), pts);
+      links.push({
+        id: edgeKey(edge_id),
+        edgeId: edge_id,
+        edge: edge,
+        source: sourceKey,
+        target: targetKey,
+      });
+    }
+
+    const fg = new ForceGraph(container as HTMLElement);
+    this._forceGraph = fg;
+
+    fg.graphData({ nodes, links })
+      .nodeId("id")
+      .linkSource("source")
+      .linkTarget("target")
+      .width(container.clientWidth || 800)
+      .height(container.clientHeight || 600)
+      .backgroundColor("#faf8ef")
+      .nodeCanvasObjectMode(() => "replace")
+      .nodeCanvasObject(this.renderNodeCanvas.bind(this))
+      .nodePointerAreaPaint(this.renderNodePointer.bind(this))
+      .linkCanvasObjectMode(() => "replace")
+      .linkCanvasObject(this.renderLinkCanvas.bind(this))
+      .linkPointerAreaPaint(this.renderLinkPointer.bind(this))
+      .onNodeClick(this.handleNodeClick.bind(this))
+      .onNodeHover(this.handleNodeHover.bind(this))
+      .onLinkClick(this.handleLinkClick.bind(this))
+      .onZoom(this.handleZoom.bind(this))
+      .enableNodeDrag(false)
+      .enablePointerInteraction(true)
+      .minZoom(0.2)
+      .maxZoom(3)
+      .d3Force("charge", null)
+      .d3Force("link", null)
+      .d3Force("center", null);
+
+    for (const node of fg.graphData().nodes) {
+      node.fx = node.x;
+      node.fy = node.y;
+    }
+
+    requestAnimationFrame(() => {
+      fg.zoomToFit(400, 40);
+    });
+
+    container.addEventListener("mousemove", (e: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      this._mouseX = e.clientX - rect.left;
+      this._mouseY = e.clientY - rect.top;
+    });
+
+    this.updateInspector();
+  }
+
+  private renderNodeCanvas(
+    node: any,
+    ctx: CanvasRenderingContext2D,
+    globalScale: number,
+  ) {
+    const board: Board = node.board;
+    const isSelected = this.selectedId === node.id;
+    const isHovered = this.hoveredId === node.id;
+    const isCurrent =
+      node.boardId === this._activeGameId ||
+      this._games.some(
+        (g) =>
+          g.id === this._activeGameId && g.current_board_id === node.boardId,
+      );
+    const isSource = this._games.some(
+      (g) => g.source_board_id === node.boardId,
+    );
+
+    if (globalScale < DOT_THRESHOLD) {
+      const color = dominantTileColor(board);
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, DOT_RADIUS, 0, 2 * Math.PI);
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      if (isSelected) {
+        ctx.strokeStyle = "#4cc9f0";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      } else if (isCurrent) {
+        ctx.strokeStyle = "#f72585";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (isSource) {
+        ctx.strokeStyle = "#4cc9f0";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    } else {
+      const [rows, cols] = board.dim;
+      const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
+      for (const cell of board.tiles) {
+        if (grid[cell.pos.r]?.[cell.pos.c] !== undefined) {
+          grid[cell.pos.r][cell.pos.c] = cell.tile;
+        }
+      }
+
+      const gap = 3;
+      const padding = 4;
+      const innerW = NODE_SIZE - padding * 2;
+      const innerH = NODE_SIZE - padding * 2;
+      const cellW = (innerW - gap * (cols - 1)) / cols;
+      const cellH = (innerH - gap * (rows - 1)) / rows;
+
+      const x0 = node.x - NODE_SIZE / 2;
+      const y0 = node.y - NODE_SIZE / 2;
+
+      ctx.fillStyle = "#8f7a66";
+      ctx.beginPath();
+      ctx.roundRect(x0, y0, NODE_SIZE, NODE_SIZE, 12);
+      ctx.fill();
+
+      if (isSelected) {
+        ctx.strokeStyle = "#4cc9f0";
+        ctx.lineWidth = 2.5;
+        ctx.stroke();
+      } else if (isCurrent) {
+        ctx.strokeStyle = "#f72585";
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      } else if (isSource) {
+        ctx.strokeStyle = "#4cc9f0";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = "#bbada0";
+      ctx.beginPath();
+      ctx.roundRect(x0 + padding, y0 + padding, innerW, innerH, 6);
+      ctx.fill();
+
+      const fontScale = Math.max(8, Math.min(15, cellW * 0.65));
+      ctx.font = `800 ${fontScale}px "Clear Sans", Arial, sans-serif`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const value = grid[r][c];
+          const colors = TILE_COLORS[value] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
+          const cx = x0 + padding + c * (cellW + gap);
+          const cy = y0 + padding + r * (cellH + gap);
+
+          ctx.fillStyle = colors.bg;
+          ctx.beginPath();
+          ctx.roundRect(cx, cy, cellW, cellH, 3);
+          ctx.fill();
+
+          if (value > 0) {
+            ctx.fillStyle = colors.fg;
+            ctx.fillText(String(value), cx + cellW / 2, cy + cellH / 2);
+          }
+        }
+      }
+    }
+  }
+
+  private renderNodePointer(
+    node: any,
+    paintColor: string,
+    ctx: CanvasRenderingContext2D,
+    globalScale: number,
+  ) {
+    ctx.fillStyle = paintColor;
+    if (globalScale < DOT_THRESHOLD) {
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, DOT_RADIUS, 0, 2 * Math.PI);
+      ctx.fill();
+    } else {
+      ctx.fillRect(
+        node.x - NODE_SIZE / 2,
+        node.y - NODE_SIZE / 2,
+        NODE_SIZE,
+        NODE_SIZE,
+      );
+    }
+  }
+
+  private renderLinkCanvas(
+    link: any,
+    ctx: CanvasRenderingContext2D,
+    _globalScale: number,
+  ) {
+    const sourceNode = link.source;
+    const targetNode = link.target;
+    if (!sourceNode?.x || !sourceNode?.y || !targetNode?.x || !targetNode?.y)
+      return;
+
+    const waypoints = this._edgeWaypoints.get(link.id) ?? [];
+    const color = edgeColor(link.edge);
+
+    ctx.beginPath();
+    if (waypoints.length > 0) {
+      ctx.moveTo(waypoints[0].x, waypoints[0].y);
+      for (let i = 1; i < waypoints.length; i++) {
+        ctx.lineTo(waypoints[i].x, waypoints[i].y);
+      }
+    } else {
+      ctx.moveTo(sourceNode.x, sourceNode.y);
+      ctx.lineTo(targetNode.x, targetNode.y);
+    }
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2.5;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.stroke();
+
+    const lastPt =
+      waypoints.length > 0
+        ? waypoints[waypoints.length - 1]
+        : { x: sourceNode.x, y: sourceNode.y };
+    const prevPt =
+      waypoints.length > 1
+        ? waypoints[waypoints.length - 2]
+        : { x: sourceNode.x, y: sourceNode.y };
+
+    const dx = lastPt.x - prevPt.x;
+    const dy = lastPt.y - prevPt.y;
+    const len = Math.sqrt(dx * dx + dy * dy);
+    if (len < 0.01) return;
+
+    const ux = dx / len;
+    const uy = dy / len;
+
+    const arrowLen = 10;
+    const arrowW = 4;
+    const tipX = targetNode.x - ux * (NODE_SIZE / 2 + 2);
+    const tipY = targetNode.y - uy * (NODE_SIZE / 2 + 2);
+    const baseX = tipX - ux * arrowLen;
+    const baseY = tipY - uy * arrowLen;
+    const perpX = -uy * arrowW;
+    const perpY = ux * arrowW;
+
+    ctx.beginPath();
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(baseX + perpX, baseY + perpY);
+    ctx.lineTo(baseX - perpX, baseY - perpY);
+    ctx.closePath();
+    ctx.fillStyle = color;
+    ctx.fill();
+  }
+
+  private renderLinkPointer(
+    link: any,
+    paintColor: string,
+    ctx: CanvasRenderingContext2D,
+    _globalScale: number,
+  ) {
+    const sourceNode = link.source;
+    const targetNode = link.target;
+    if (!sourceNode?.x || !sourceNode?.y || !targetNode?.x || !targetNode?.y)
+      return;
+
+    ctx.strokeStyle = paintColor;
+    ctx.lineWidth = 8;
+    ctx.lineCap = "round";
+    ctx.beginPath();
+    ctx.moveTo(sourceNode.x, sourceNode.y);
+    ctx.lineTo(targetNode.x, targetNode.y);
+    ctx.stroke();
+  }
+
+  private handleNodeClick(node: any) {
+    this.selectedId = node.id;
+    this.updateInspector();
+  }
+
+  private handleNodeHover(node: any) {
+    if (node) {
+      this.hoveredId = node.id;
+      this.showHoverCard(node);
+    } else {
+      this.hoveredId = null;
+      this.removeHoverCard();
+    }
+  }
+
+  private handleLinkClick(link: any) {
+    this.selectedId = link.id;
+    this.updateInspector();
+  }
+
+  private handleZoom({ k }: { k: number; x: number; y: number }) {
+    this.dispatchEvent(
+      new CustomEvent("zoom-level", {
+        detail: { zoom: k },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  private showHoverCard(node: any) {
+    this.removeHoverCard();
+
+    const card = document.createElement("div");
+    card.className = "graph-hover-card";
+    card.innerHTML = `<strong>Board ${node.id.slice(0, 16)}</strong><span>${boardSummary(node.board)}</span>`;
+    card.style.left = `${this._mouseX + 16}px`;
+    card.style.top = `${this._mouseY + 16}px`;
+
+    const host = this.querySelector<HTMLElement>(".graph-infinite-canvas-host");
+    if (host) {
+      host.appendChild(card);
+      this._hoverCard = card;
+    }
+  }
+
+  private removeHoverCard() {
+    if (this._hoverCard) {
+      this._hoverCard.remove();
+      this._hoverCard = null;
+    }
+  }
+
+  private updateInspector() {
+    const inspector = this.querySelector<HTMLElement>(".graph-inspector");
+    if (!inspector) return;
+
+    const graphData = this._graphData;
+    const body = inspector.querySelector<HTMLElement>(".graph-inspector-body");
+    if (!body || !graphData) return;
+
+    const selectedNode = this.selectedId?.startsWith("board:")
+      ? graphData.nodes[this.selectedId.slice("board:".length)]
+      : undefined;
+    const selectedEdge = this.selectedId?.startsWith("edge:")
+      ? graphData.edges[this.selectedId.slice("edge:".length)]
+      : undefined;
+    const selectedEdgeId = selectedEdge
+      ? this.selectedId!.slice("edge:".length)
+      : null;
+    const selectedNodeId = selectedNode
+      ? this.selectedId!.slice("board:".length)
+      : null;
+
+    body.innerHTML = `
+      ${
+        selectedNode
+          ? `<p class="eyebrow">Selected board</p>
+             <h3>${selectedNodeId ?? ""}</h3>
+             <p>${selectedNode.dim.join(" × ")} board</p>
+             <p>${boardSummary(selectedNode)}</p>`
+          : ""
+      }
+      ${
+        selectedEdge
+          ? `<p class="eyebrow">Selected transition</p>
+             <h3>${selectedEdgeId}</h3>
+             <p>${edgeLabel(selectedEdge)}</p>
+             <p>${selectedEdge.from.slice(0, 10)} → ${selectedEdge.to.slice(0, 10)}</p>`
+          : ""
+      }
+      ${
+        !selectedNode && !selectedEdge
+          ? `<p>Select a node or edge to inspect.</p>`
+          : ""
+      }
+    `;
   }
 
   private render() {
@@ -389,199 +720,13 @@ export class GraphTabElement extends HTMLElement {
       return;
     }
 
-    const graphData = this._graphData;
-    if (!graphData) {
+    if (!this._graphData) {
       this.innerHTML = `<div class="graph-empty">Build the graph by making a move.</div>`;
       return;
     }
 
-    const layout = this._pendingLayout ?? makeDagLayout(graphData);
-    const nodes = graphData.nodes;
-    const nodeCount = Object.keys(nodes).length;
-    const edgeCount = Object.keys(graphData.edges).length;
-    const activeGame = this._games.find(
-      (game) => game.id === this._activeGameId,
-    );
-    const selectedNode = this.selectedId?.startsWith("board:")
-      ? nodes[this.selectedId.slice("board:".length)]
-      : undefined;
-    const selectedEdge = this.selectedId?.startsWith("edge:")
-      ? graphData.edges[this.selectedId.slice("edge:".length)]
-      : undefined;
-    const selectedEdgeId = selectedEdge
-      ? this.selectedId!.slice("edge:".length)
-      : null;
-    const selectedNodeId = selectedEdge
-      ? this.selectedId!.slice("board:".length)
-      : null;
-    const hoveredNode = this.hoveredId?.startsWith("board:")
-      ? nodes[this.hoveredId.slice("board:".length)]
-      : undefined;
-
-    const edgesSvg = layout.edges
-      .map(({ edge, edge_id, points }) => {
-        const color = edgeColor(edge);
-        return `<path
-          key="${edge_id}"
-          data-edge="${edge_id}"
-          d="${edgePath(points)}"
-          fill="none"
-          stroke="${color}"
-          stroke-width="2.5"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          marker-end="url(#${edge.kind.Move ? "graph-arrow-move" : "graph-arrow-spawn"})"
-          class="graph-edge"
-        />`;
-      })
-      .join("");
-
-    const nodeButtons = Object.keys(nodes)
-      .map((board_id) => {
-        const node = nodes[board_id];
-        const position = layout.nodes[nodeKey(board_id)];
-        if (!position) return "";
-        const isCurrent = board_id === activeGame?.current_board_id;
-        const isSource = this._games.some(
-          (game) => game.source_board_id === board_id,
-        );
-        const isSelected =
-          this.selectedId === nodeKey(board_id) ||
-          this.hoveredId === nodeKey(board_id);
-        return `<button
-          key="${board_id}"
-          data-node="${board_id}"
-          type="button"
-          class="graph-board-card ${
-            isCurrent ? "current" : ""
-          } ${isSource ? "source" : ""} ${isSelected ? "selected" : ""}"
-          style="left:${position.x}px;top:${position.y}px;width:${NODE_SIZE}px;height:${NODE_SIZE}px;"
-          aria-label="Board ${boardSummary(node)}"
-        >
-          ${boardThumbnail(node)}
-        </button>`;
-      })
-      .join("");
-
-    this.innerHTML = `
-      <div class="graph-infinite-container">
-        <div
-          class="graph-canvas"
-          style="width:${layout.width}px;height:${layout.height}px;"
-        >
-          <svg
-            class="graph-edges"
-            width="${layout.width}"
-            height="${layout.height}"
-            viewBox="0 0 ${layout.width} ${layout.height}"
-            aria-hidden="true"
-          >
-            <defs>
-              <marker
-                id="graph-arrow-move"
-                markerWidth="8"
-                markerHeight="8"
-                refX="7"
-                refY="4"
-                orient="auto"
-              >
-                <path d="M 0 0 L 8 4 L 0 8 z" fill="#4cc9f0" />
-              </marker>
-              <marker
-                id="graph-arrow-spawn"
-                markerWidth="8"
-                markerHeight="8"
-                refX="7"
-                refY="4"
-                orient="auto"
-              >
-                <path d="M 0 0 L 8 4 L 0 8 z" fill="#f72585" />
-              </marker>
-            </defs>
-            ${edgesSvg}
-          </svg>
-
-          ${nodeButtons}
-        </div>
-
-        ${
-          hoveredNode
-            ? `<div class="graph-hover-card">
-                <strong>Board ${this.hoveredId!.slice(0, 12)}</strong>
-                <span>${boardSummary(hoveredNode)}</span>
-              </div>`
-            : ""
-        }
-        ${!nodeCount ? `<div class="graph-empty">No graph nodes yet.</div>` : ""}
-      </div>
-
-      <details class="graph-inspector">
-        <summary>?</summary>
-        <div class="graph-inspector-body">
-          ${
-            selectedNode
-              ? `<p class="eyebrow">Selected board</p>
-                 <h3>${selectedNodeId ?? ""}</h3>
-                 <p>${selectedNode.dim.join(" × ")} board</p>
-                 <p>${boardSummary(selectedNode)}</p>`
-              : ""
-          }
-          ${
-            selectedEdge
-              ? `<p class="eyebrow">Selected transition</p>
-                 <h3>${selectedEdgeId}</h3>
-                 <p>${edgeLabel(selectedEdge)}</p>
-                 <p>${selectedEdge.from.slice(0, 10)} → ${selectedEdge.to.slice(0, 10)}</p>`
-              : ""
-          }
-          ${
-            !selectedNode && !selectedEdge
-              ? `<p>Select a node or edge to inspect.</p>`
-              : ""
-          }
-        </div>
-      </details>
-    `;
-
-    this.bindEvents();
-    this.setupPanZoom();
-    this.applyTransform();
-  }
-
-  private bindEvents() {
-    for (const path of this.querySelectorAll<SVGPathElement>(
-      "path.graph-edge",
-    )) {
-      path.addEventListener("click", () => {
-        const id = edgeKey(path.dataset.edge!);
-        this.selectedId = id;
-        this.render();
-      });
-    }
-    for (const btn of this.querySelectorAll<HTMLButtonElement>(
-      "button.graph-board-card",
-    )) {
-      const id = nodeKey(btn.dataset.node!);
-      btn.addEventListener("mouseenter", () => {
-        this.hoveredId = id;
-        this.render();
-      });
-      btn.addEventListener("mouseleave", () => {
-        this.hoveredId = null;
-        this.render();
-      });
-      btn.addEventListener("focus", () => {
-        this.hoveredId = id;
-        this.render();
-      });
-      btn.addEventListener("blur", () => {
-        this.hoveredId = null;
-        this.render();
-      });
-      btn.addEventListener("click", () => {
-        this.selectedId = id;
-        this.render();
-      });
+    if (!this._forceGraph) {
+      this.innerHTML = `<div class="graph-empty">No graph nodes yet.</div>`;
     }
   }
 }

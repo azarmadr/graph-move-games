@@ -5,6 +5,7 @@ export class GraphControlsElement extends HTMLElement {
   private _maxHopDistance: number = 10;
   private _markers: NavMarker[] = [];
   private _zoom: number = 1;
+  private _physicsEnabled: boolean = false;
 
   get hopDistance(): number {
     return this._hopDistance;
@@ -23,6 +24,15 @@ export class GraphControlsElement extends HTMLElement {
   set zoom(value: number) {
     this._zoom = value;
     this.render();
+  }
+
+  set physicsEnabled(value: boolean) {
+    this._physicsEnabled = value;
+    this.render();
+  }
+
+  get physicsEnabled(): boolean {
+    return this._physicsEnabled;
   }
 
   connectedCallback() {
@@ -51,6 +61,16 @@ export class GraphControlsElement extends HTMLElement {
           <div class="graph-controls-hop-buttons">
             ${this.createHopButtons()}
           </div>
+        </div>
+        <div class="graph-controls-section">
+          <span class="graph-controls-label">Physics:</span>
+          <button
+            type="button"
+            class="graph-controls-physics-toggle ${this._physicsEnabled ? "active" : ""}"
+            data-physics-toggle
+          >
+            ${this._physicsEnabled ? "On" : "Off"}
+          </button>
         </div>
         <div class="graph-controls-section">
           <span class="graph-controls-label">Legend:</span>
@@ -142,6 +162,20 @@ export class GraphControlsElement extends HTMLElement {
         this.dispatchEvent(
           new CustomEvent("hop-change", {
             detail: { hopDistance: this._hopDistance },
+            bubbles: true,
+            composed: true,
+          }),
+        );
+      });
+    }
+
+    const physicsBtn = this.querySelector<HTMLButtonElement>(
+      "[data-physics-toggle]",
+    );
+    if (physicsBtn) {
+      physicsBtn.addEventListener("click", () => {
+        this.dispatchEvent(
+          new CustomEvent("physics-toggle", {
             bubbles: true,
             composed: true,
           }),
