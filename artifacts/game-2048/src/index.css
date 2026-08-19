@@ -243,25 +243,55 @@ graph-controls {
 }
 
 .graph-inspector {
-  align-self: start;
-  min-height: 180px;
-  padding: 20px;
-  border-radius: 14px;
-  background: #ede0c8;
-  color: #776e65;
-  overflow-wrap: anywhere;
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  z-index: 10;
 }
 
-.graph-inspector h3 {
-  margin: 8px 0;
-  color: #2a2a45;
-  font-size: 14px;
+.graph-inspector summary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: rgba(42, 42, 69, 0.92);
+  color: #f9f6f2;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  list-style: none;
 }
 
-.graph-inspector p {
-  margin: 8px 0;
+.graph-inspector summary::-webkit-details-marker {
+  display: none;
+}
+
+.graph-inspector-body {
+  position: absolute;
+  bottom: 40px;
+  right: 0;
+  min-width: 200px;
+  max-width: 280px;
+  padding: 14px;
+  border-radius: 10px;
+  background: rgba(42, 42, 69, 0.94);
+  color: #f9f6f2;
+  font-size: 12px;
+}
+
+.graph-inspector-body h3 {
+  margin: 6px 0;
+  color: #4cc9f0;
   font-size: 13px;
-  line-height: 1.5;
+  word-break: break-all;
+}
+
+.graph-inspector-body p {
+  margin: 4px 0;
+  line-height: 1.4;
+  color: rgba(249, 246, 242, 0.8);
 }
 
 .graph-empty {
