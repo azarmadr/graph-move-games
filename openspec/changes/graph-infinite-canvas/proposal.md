@@ -12,14 +12,14 @@ The problem is twofold:
 - **Async graph loading**: Move graph fetch and layout computation so the Graph tab opens immediately with a skeleton, then fills in when the graph data arrives.
 - **Infinite canvas look**: Remove visible canvas boundaries/borders. The graph canvas should render continuously without perceptible edges. Use overflow: visible or larger-than-viewport canvas.
 - **Floating UI elements**: Settings, info, and controls float over the graph canvas (position: absolute/fixed). They layer on top of the graph without being confined by it.
-- **Pan within graph**: When panning, the view should stay within the graph content bounds - never pan "outside" the graph into empty space. The graph itself is infinite in appearance, but panning is constrained to content.
+- **Node navigation**: Marker buttons allow navigating to specific nodes (active game, root, etc.) by centering the viewport on them. The graph is displayed as a zoomed-out overview; users navigate to areas of interest via controls rather than panning.
 
 ## Capabilities
 
 ### New Capabilities
 
 - `graph-async-loading`: Load graph data and perform dagre layout asynchronously so clicking the Graph tab doesn't freeze the UI. Initial render shows a skeleton; graph populates when ready.
-- `graph-infinite-canvas`: Render the graph without visible canvas boundaries. The graph appears continuous and extends beyond the viewport. Settings/info elements float over the graph canvas. Panning is confined to graph content bounds.
+- `graph-infinite-canvas`: Render the graph without visible canvas boundaries. The graph appears continuous and extends beyond the viewport. Settings/info elements float over the graph canvas. Node navigation markers allow jumping to specific nodes.
 - `modular-web-components`: Extract monolithic game-app into self-contained custom elements (graph-tab, graph-controls, game-board, score-display) that own their rendering and state.
 
 ### Modified Capabilities

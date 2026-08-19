@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines the infinite canvas rendering system where the graph appears continuous without visible boundaries, settings/info elements float over the graph, and panning is constrained to the graph's content bounds.
+Defines the infinite canvas rendering system where the graph appears continuous without visible boundaries, settings/info elements float over the graph, and users navigate to nodes via markers and zoom controls.
 
 ## ADDED Requirements
 
@@ -30,16 +30,27 @@ The system SHALL render settings, info, and controls as separate elements that f
 - **THEN** they layer on top of the graph (z-index: 10+) without being clipped by the graph's overflow
 - **THEN** they do not affect the graph's pan/zoom or content bounds
 
-### Requirement: Content-constrained panning
+### Requirement: Node navigation markers
 
-The system SHALL confine panning to the graph's content bounds, preventing the user from panning into empty space outside the graph.
+The system SHALL provide navigation buttons that center the viewport on specific graph nodes.
 
-- **WHEN** dagre layout computes node positions
-- **THEN** the system calculates the bounding box of all visible nodes (min/max x/y plus node dimensions)
-- **WHEN** user drags to pan the graph
-- **THEN** the pan movement is clamped at the content boundary, never showing empty space outside the graph
-- **WHEN** the pan reaches the edge of the graph content
-- **THEN** further dragging in that direction stops at the content boundary
+- **WHEN** the graph-tab renders the graph overview
+- **THEN** navigation marker buttons are visible (e.g., "Active game", "Root")
+- **WHEN** the user clicks a navigation marker
+- **THEN** the viewport centers on the corresponding node
+- **THEN** the node is positioned at the center of the visible area
+
+### Requirement: Zoom controls
+
+The system SHALL provide zoom in/out controls in the graph-controls panel.
+
+- **WHEN** the graph-tab renders the graph overview
+- **THEN** zoom in and zoom out buttons are visible in graph-controls
+- **WHEN** the user clicks zoom in
+- **THEN** the graph scale increases by a fixed step
+- **WHEN** the user clicks zoom out
+- **THEN** the graph scale decreases by a fixed step
+- **THEN** the zoom level is bounded between a minimum and maximum (e.g., 0.2x to 3x)
 
 ### Requirement: Center on active game
 

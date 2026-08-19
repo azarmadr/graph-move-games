@@ -43,11 +43,11 @@ Key constraints from existing specs:
 - Background blending (transparent or matching page) creates seamless appearance
 - Settings/info float on top via position: absolute, not affecting graph bounds
 
-### Why content-confinement as part of infinite canvas
-- The graph is infinite in appearance - panning "outside" the graph should be impossible
-- Content bounds are calculated from dagre node positions, not canvas size
-- Viewport always shows valid graph content, never empty space
-- This is not a separate capability but an intrinsic behavior of the infinite canvas
+### Why node navigation over pan confinement
+- Pan/zoom via touch conflicts with browser gestures (pinch-to-zoom, swipe-to-scroll) on Android
+- A zoomed-out overview shows the full graph structure at once
+- Marker buttons (active game, root node, key milestones) let users jump to areas of interest
+- Simpler implementation: no bounds calculation, no clamping, no touch event interception
 
 ## Risks / Trade-offs
 
@@ -62,4 +62,3 @@ Key constraints from existing specs:
 - What should happen if the graph has zero nodes? Should it show an empty state or just the skeleton?
 - Should the hop filter controls be inside graph-tab or graph-controls? If graph-controls, how does it communicate with graph-tab (custom events vs. shared state)?
 - What's the default hop distance for initial render? (Suggested: 1, showing only immediate neighbors)
-- Should pan position be remembered between tab switches, or always center on active game?

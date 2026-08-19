@@ -170,6 +170,7 @@ export class GraphTabElement extends HTMLElement {
   private _panOffset = { x: 0, y: 0 };
   private _onMouseMove: ((e: MouseEvent) => void) | null = null;
   private _onMouseUp: (() => void) | null = null;
+  private _panZoomBound = false;
 
   set graphData(value: GraphData | null) {
     this._graphData = value;
@@ -208,9 +209,12 @@ export class GraphTabElement extends HTMLElement {
     return this._loadingState;
   }
 
+  get zoom(): number {
+    return this._zoom;
+  }
+
   connectedCallback() {
     this.render();
-    this.setupPanZoom();
   }
 
   disconnectedCallback() {
@@ -233,20 +237,6 @@ export class GraphTabElement extends HTMLElement {
       container.classList.add("grabbing");
     });
 
-    this._onMouseMove = (e: MouseEvent) => {
-      if (!this._isPanning) return;
-      this._panX = this._panOffset.x + (e.clientX - this._panStart.x);
-      this._panY = this._panOffset.y + (e.clientY - this._panStart.y);
-      this.applyTransform();
-    };
-    window.addEventListener("mousemove", this._onMouseMove);
-
-    this._onMouseUp = () => {
-      this._isPanning = false;
-      container.classList.remove("grabbing");
-    };
-    window.addEventListener("mouseup", this._onMouseUp);
-
     container.addEventListener(
       "wheel",
       (e) => {
@@ -265,6 +255,25 @@ export class GraphTabElement extends HTMLElement {
       },
       { passive: false },
     );
+
+    if (!this._panZoomBound) {
+      this._panZoomBound = true;
+
+      this._onMouseMove = (e: MouseEvent) => {
+        if (!this._isPanning) return;
+        this._panX = this._panOffset.x + (e.clientX - this._panStart.x);
+        this._panY = this._panOffset.y + (e.clientY - this._panStart.y);
+        this.applyTransform();
+      };
+      window.addEventListener("mousemove", this._onMouseMove);
+
+      this._onMouseUp = () => {
+        this._isPanning = false;
+        const c = this.querySelector<HTMLElement>(".graph-infinite-container");
+        c?.classList.remove("grabbing");
+      };
+      window.addEventListener("mouseup", this._onMouseUp);
+    }
   }
 
   private applyTransform() {
@@ -272,6 +281,43 @@ export class GraphTabElement extends HTMLElement {
     if (canvas) {
       canvas.style.transform = `translate(${this._panX}px, ${this._panY}px) scale(${this._zoom})`;
     }
+    this.dispatchEvent(
+      new CustomEvent("zoom-level", {
+        detail: { zoom: this._zoom },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+
+  centerOnNode(nodeId: string) {
+    if (!this._pendingLayout) return;
+    const position = this._pendingLayout.nodes[nodeId];
+    if (!position) return;
+    const container = this.querySelector<HTMLElement>(
+      ".graph-infinite-container",
+    );
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    this._panX = rect.width / 2 - position.x * this._zoom;
+    this._panY = rect.height / 2 - position.y * this._zoom;
+    this.applyTransform();
+  }
+
+  zoomBy(direction: "in" | "out") {
+    const factor = direction === "in" ? 1.2 : 0.8;
+    const container = this.querySelector<HTMLElement>(
+      ".graph-infinite-container",
+    );
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    const prevZoom = this._zoom;
+    this._zoom = Math.max(0.2, Math.min(3, this._zoom * factor));
+    this._panX = centerX - (centerX - this._panX) * (this._zoom / prevZoom);
+    this._panY = centerY - (centerY - this._panY) * (this._zoom / prevZoom);
+    this.applyTransform();
   }
 
   private centerOnGraph() {
@@ -495,6 +541,7 @@ export class GraphTabElement extends HTMLElement {
     `;
 
     this.bindEvents();
+    this.setupPanZoom();
     this.applyTransform();
   }
 
