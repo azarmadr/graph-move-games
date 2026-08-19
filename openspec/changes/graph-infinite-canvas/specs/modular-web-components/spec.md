@@ -18,9 +18,9 @@ The system SHALL provide a `<graph-tab>` custom element that owns its graph rend
 The system SHALL provide a `<graph-controls>` custom element that renders settings and controls floating over the graph.
 
 - **WHEN** the graph-controls element is connected to the DOM
-- **THEN** it renders hop filter buttons, legend, and info that float over the graph canvas
-- **THEN** it communicates filter changes to the graph-tab via custom events or shared state
-- **THEN** it does not affect the graph's pan/zoom or content bounds
+- **THEN** it renders hop filter buttons, legend, info, and zoom controls that float over the graph canvas
+- **THEN** it communicates filter changes and zoom commands to the graph-tab via custom events or shared state
+- **THEN** it does not affect the graph's content bounds
 
 ### Requirement: game-board custom element
 

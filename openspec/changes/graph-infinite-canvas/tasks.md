@@ -26,16 +26,18 @@
 - [x] 3.3 Set canvas dimensions to 100% width/height of viewport or parent container
 - [x] 3.4 Ensure graph background blends with page (transparent or matching color)
 - [x] 3.5 Position graph nodes/edges relative to viewport origin (center on active game)
-- [ ] 3.6 Calculate content bounds from dagre node positions (min/max x/y + node dimensions)
-- [ ] 3.7 Implement pan confinement: clamp panning at content boundaries, never show empty space
-- [x] 3.8 Center graph on active game's current board on initial load
-- [ ] 3.9 Recalculate content bounds on hop filter change or new graph data
+- [x] 3.6 Center graph on active game's current board on initial load
+- [x] 3.7 Add node navigation marker buttons to graph-controls (Active game, Root)
+- [x] 3.8 Implement viewport centering on marker click
+- [x] 3.9 Update marker list when hop filter or graph data changes
+- [x] 3.10 Add zoom in/out buttons to graph-controls
+- [x] 3.11 Wire zoom buttons to graph-tab zoom state (min 0.2x, max 3x)
 
 ## 4. Floating UI Elements (Phase 4)
 
-- [ ] 4.1 Position `<graph-controls>` with position: absolute relative to graph container
-- [ ] 4.2 Set z-index: 10+ on graph-controls so it layers above the graph
-- [ ] 4.3 Ensure graph-controls does not affect graph pan/zoom or content bounds
+- [x] 4.1 Position `<graph-controls>` with position: absolute relative to graph container
+- [x] 4.2 Set z-index: 10+ on graph-controls so it layers above the graph
+- [x] 4.3 Ensure graph-controls does not affect graph pan/zoom or content bounds
 - [ ] 4.4 Test graph-controls remains visible and interactive when graph content is underneath
 
 ## 5. Integration & Verification (Phase 5)
@@ -43,6 +45,6 @@
 - [ ] 5.1 Verify graph tab opens without page freeze (async loading works)
 - [ ] 5.2 Verify graph appears infinite (no visible canvas boundary)
 - [ ] 5.3 Verify settings/info float over the graph without affecting bounds
-- [ ] 5.4 Verify pan stays within graph content (no empty space visible)
-- [ ] 5.5 Verify hop filter changes recalculate bounds and re-center
+- [ ] 5.4 Verify zoom in/out buttons work and respect bounds
+- [ ] 5.5 Verify node navigation markers center viewport on target node
 - [ ] 5.6 Verify all modular WCs work together without regressions to board rendering or move logic

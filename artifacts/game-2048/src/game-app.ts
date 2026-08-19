@@ -281,5 +281,44 @@ export class GameAppElement extends HTMLElement {
     el.graphData = this.visualizationGraph;
     el.games = this.visualizationGames;
     el.activeGameId = this.visualizationActiveGameId;
+
+    const controls = this.querySelector<GraphControlsElement>("graph-controls");
+    if (controls) {
+      const markers = this.buildNavMarkers();
+      controls.markers = markers;
+      controls.zoom = el.zoom;
+
+      controls.addEventListener("navigate-node", ((e: CustomEvent) => {
+        el.centerOnNode(e.detail.nodeId);
+      }) as EventListener);
+
+      controls.addEventListener("zoom-change", ((e: CustomEvent) => {
+        el.zoomBy(e.detail.direction);
+      }) as EventListener);
+
+      el.addEventListener("zoom-level", ((e: CustomEvent) => {
+        controls.zoom = e.detail.zoom;
+      }) as EventListener);
+    }
+  }
+
+  private buildNavMarkers(): Array<{ id: string; label: string }> {
+    const markers: Array<{ id: string; label: string }> = [];
+    if (this.state) {
+      markers.push({
+        id: `board:${this.state.game.current_board_id}`,
+        label: "Active game",
+      });
+    }
+    if (this.visualizationGraph) {
+      const nodeIds = Object.keys(this.visualizationGraph.nodes);
+      if (nodeIds.length > 0) {
+        const rootId = nodeIds[0];
+        if (!markers.some((m) => m.id === `board:${rootId}`)) {
+          markers.push({ id: `board:${rootId}`, label: "Root" });
+        }
+      }
+    }
+    return markers;
   }
 }
