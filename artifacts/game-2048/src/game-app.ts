@@ -296,6 +296,11 @@ export class GameAppElement extends HTMLElement {
         el.zoomBy(e.detail.direction);
       }) as EventListener);
 
+      controls.addEventListener("physics-toggle", (() => {
+        el.togglePhysics();
+        controls.physicsEnabled = el.physicsEnabled;
+      }) as EventListener);
+
       el.addEventListener("zoom-level", ((e: CustomEvent) => {
         controls.zoom = e.detail.zoom;
       }) as EventListener);

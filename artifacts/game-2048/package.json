@@ -19,6 +19,7 @@
   "dependencies": {
     "@rollup/rollup-win32-x64-msvc": "^4.62.2",
     "@dagrejs/dagre": "^3.0.0",
-    "@types/dagre": "^0.7.54"
+    "@types/dagre": "^0.7.54",
+    "force-graph": "^1.51.4"
   }
 }
