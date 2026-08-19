@@ -15,7 +15,6 @@ import {
 import { GraphTabElement } from "./graph-tab";
 import { GameBoardElement } from "./game-board";
 import { ScoreDisplayElement } from "./score-display";
-import { GraphControlsElement } from "./graph-controls";
 
 export class GameAppElement extends HTMLElement {
   private state: GameState | null = null;
@@ -28,7 +27,7 @@ export class GameAppElement extends HTMLElement {
   private activeTab: "play" | "graph" = "play";
   private visualizationGraph: GraphData | null = null;
   private visualizationGames: GameInstance[] = [];
-  private visualizationActiveGameId: string | undefined;
+  private visualizationActiveGameId: string | null = null;
 
   private static readonly STORAGE_KEY = "game-2048-persisted-v1";
 
@@ -143,7 +142,7 @@ export class GameAppElement extends HTMLElement {
       const [graph, snapshot] = await Promise.all([getGraph(), exportGraph()]);
       this.visualizationGraph = graph;
       this.visualizationGames = Object.values(snapshot.games);
-      this.visualizationActiveGameId = this.state?.game.id;
+      this.visualizationActiveGameId = this.state?.game.id ?? null;
       this.linkGraphTab();
     } catch (e) {
       console.error("graph visualization snapshot failed:", e);
@@ -151,7 +150,6 @@ export class GameAppElement extends HTMLElement {
   }
 
   private render() {
-    const isGameOver = this.state?.game.is_terminated ?? false;
     const tab = this.activeTab;
 
     this.innerHTML = `
@@ -219,7 +217,6 @@ export class GameAppElement extends HTMLElement {
           tab === "graph"
             ? `<div class="graph-container">
                 <graph-tab></graph-tab>
-                <graph-controls></graph-controls>
               </div>`
             : `<game-board></game-board>`
         }
@@ -280,50 +277,6 @@ export class GameAppElement extends HTMLElement {
     if (!el) return;
     el.graphData = this.visualizationGraph;
     el.games = this.visualizationGames;
-    el.activeGameId = this.visualizationActiveGameId;
-
-    const controls = this.querySelector<GraphControlsElement>("graph-controls");
-    if (controls) {
-      const markers = this.buildNavMarkers();
-      controls.markers = markers;
-      controls.zoom = el.zoom;
-
-      controls.addEventListener("navigate-node", ((e: CustomEvent) => {
-        el.centerOnNode(e.detail.nodeId);
-      }) as EventListener);
-
-      controls.addEventListener("zoom-change", ((e: CustomEvent) => {
-        el.zoomBy(e.detail.direction);
-      }) as EventListener);
-
-      controls.addEventListener("physics-toggle", (() => {
-        el.togglePhysics();
-        controls.physicsEnabled = el.physicsEnabled;
-      }) as EventListener);
-
-      el.addEventListener("zoom-level", ((e: CustomEvent) => {
-        controls.zoom = e.detail.zoom;
-      }) as EventListener);
-    }
-  }
-
-  private buildNavMarkers(): Array<{ id: string; label: string }> {
-    const markers: Array<{ id: string; label: string }> = [];
-    if (this.state) {
-      markers.push({
-        id: `board:${this.state.game.current_board_id}`,
-        label: "Active game",
-      });
-    }
-    if (this.visualizationGraph) {
-      const nodeIds = Object.keys(this.visualizationGraph.nodes);
-      if (nodeIds.length > 0) {
-        const rootId = nodeIds[0];
-        if (!markers.some((m) => m.id === `board:${rootId}`)) {
-          markers.push({ id: `board:${rootId}`, label: "Root" });
-        }
-      }
-    }
-    return markers;
+    el.activeGameId = this.visualizationActiveGameId ?? undefined;
   }
 }
