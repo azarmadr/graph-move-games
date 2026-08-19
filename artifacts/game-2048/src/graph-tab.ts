@@ -515,29 +515,32 @@ export class GraphTabElement extends HTMLElement {
         ${!nodeCount ? `<div class="graph-empty">No graph nodes yet.</div>` : ""}
       </div>
 
-      <aside class="graph-inspector">
-        ${
-          !selectedNode && !selectedEdge
-            ? `<p>Select a node or edge to inspect its canonical data.</p>`
-            : ""
-        }
-        ${
-          selectedNode
-            ? `<p class="eyebrow">Selected board</p>
-               <h3>${selectedNodeId ?? ""}</h3>
-               <p>${selectedNode.dim.join(" × ")} board</p>
-               <p>${boardSummary(selectedNode)}</p>`
-            : ""
-        }
-        ${
-          selectedEdge
-            ? `<p class="eyebrow">Selected transition</p>
-               <h3>${selectedEdgeId}</h3>
-               <p>${edgeLabel(selectedEdge)}</p>
-               <p>${selectedEdge.from.slice(0, 10)} → ${selectedEdge.to.slice(0, 10)}</p>`
-            : ""
-        }
-      </aside>
+      <details class="graph-inspector">
+        <summary>?</summary>
+        <div class="graph-inspector-body">
+          ${
+            selectedNode
+              ? `<p class="eyebrow">Selected board</p>
+                 <h3>${selectedNodeId ?? ""}</h3>
+                 <p>${selectedNode.dim.join(" × ")} board</p>
+                 <p>${boardSummary(selectedNode)}</p>`
+              : ""
+          }
+          ${
+            selectedEdge
+              ? `<p class="eyebrow">Selected transition</p>
+                 <h3>${selectedEdgeId}</h3>
+                 <p>${edgeLabel(selectedEdge)}</p>
+                 <p>${selectedEdge.from.slice(0, 10)} → ${selectedEdge.to.slice(0, 10)}</p>`
+              : ""
+          }
+          ${
+            !selectedNode && !selectedEdge
+              ? `<p>Select a node or edge to inspect.</p>`
+              : ""
+          }
+        </div>
+      </details>
     `;
 
     this.bindEvents();
