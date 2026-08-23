@@ -161,6 +161,13 @@ export class GameAppElement extends HTMLElement {
         </h1>
         <p style="color:#9b8f82;font-size:14px;margin:0 0 24px;">
           Rust/WASM · Model-driven DAG · Phase 2
+          <button
+            id="download-data"
+            type="button"
+            style="margin-left:12px;padding:2px 8px;border-radius:4px;border:1px solid #bbada0;background:transparent;color:#9b8f82;font-size:11px;cursor:pointer;"
+          >
+            Download data
+          </button>
         </p>
 
         <nav class="app-tabs" aria-label="Application views">
@@ -242,6 +249,19 @@ export class GameAppElement extends HTMLElement {
       btn.addEventListener("click", () => {
         const [r, c] = (btn.dataset.size ?? "4x4").split("x").map(Number);
         void this.startNewGame(r, c);
+      });
+    }
+    const dlBtn = this.querySelector<HTMLButtonElement>("#download-data");
+    if (dlBtn) {
+      dlBtn.addEventListener("click", () => {
+        const data = localStorage.getItem("game-2048-persisted-v1");
+        if (!data) return;
+        const blob = new Blob([data], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = "game-2048-persisted.json";
+        a.click();
+        URL.revokeObjectURL(a.href);
       });
     }
   }
