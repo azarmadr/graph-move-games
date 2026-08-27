@@ -1,5 +1,4 @@
-# Command runner for the game-2048 artifact.
-# Replaces `pnpm --filter @workspace/game-2048 run <script>` with `just <cmd>`.
+# Command runner for the 2048 game project.
 
 port := "26141"
 base_path := "/"
@@ -12,7 +11,7 @@ default:
 
 # Install the Rust 1.88.0 toolchain with the wasm32 target (one-time setup)
 toolchain:
-    pnpm --filter @workspace/game-2048 run rustup-init
+    pnpm run rustup-init
 
 # Install workspace dependencies
 install:
@@ -20,35 +19,35 @@ install:
 
 # Build the wasm engine into public/wasm-pkg/
 build-wasm:
-    pnpm --filter @workspace/game-2048 run build-wasm
+    pnpm run build-wasm
 
-# Run the wasm engine's Rust unit tests
+# Run the Rust unit tests
 test:
-    cargo test --manifest-path artifacts/game-2048/wasm-game/Cargo.toml
+    cargo test -p game-core
 
 # Run the Vite dev server (builds wasm first; PORT/BASE_PATH defaults match .replit)
 dev:
-    pnpm --filter @workspace/game-2048 run dev
+    pnpm run dev
 
-# Typecheck the game-2048 app only
+# Typecheck the frontend
 typecheck:
-    pnpm --filter @workspace/game-2048 run typecheck
+    pnpm run typecheck
 
-# Typecheck the full workspace (libs, scripts, artifacts)
+# Typecheck the full workspace
 check:
     pnpm run typecheck
 
 # Production build: wasm engine, typecheck, then vite build
 build: build-wasm typecheck
-    PORT={{port}} pnpm --filter @workspace/game-2048 run build
+    PORT={{port}} pnpm run build
 
 # Preview the production build
 serve:
-    PORT={{port}} pnpm --filter @workspace/game-2048 run serve
+    PORT={{port}} pnpm run serve
 
 # Remove build artifacts
 clean:
-    rm -rf artifacts/game-2048/dist artifacts/game-2048/public/wasm-pkg
+    rm -rf dist public/wasm-pkg
 
 tokei:
   tokei | tee .tokei.txt
