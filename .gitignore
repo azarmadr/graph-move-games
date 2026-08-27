@@ -49,3 +49,10 @@ Thumbs.db
 .local/
 target
 artifacts/mockup-sandbox
+
+# Rust/WASM build artifacts
+crates/wasm/target/
+.wasm-sysroot/
+public/wasm-pkg/
+
+.data
