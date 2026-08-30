@@ -38,7 +38,7 @@ check:
     pnpm run typecheck
 
 # Production build: wasm engine, typecheck, then vite build
-build: build-wasm typecheck
+build: typecheck
     PORT={{port}} pnpm run build
 
 # Preview the production build
@@ -48,8 +48,3 @@ serve:
 # Remove build artifacts
 clean:
     rm -rf dist public/wasm-pkg
-
-tokei:
-  tokei | tee .tokei.txt
-  jj squash .tokei.txt -t l/ai
-  jj op show -p

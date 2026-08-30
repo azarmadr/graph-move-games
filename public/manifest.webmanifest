@@ -1,0 +1,17 @@
+{
+  "name": "2048 + DAG Graph",
+  "short_name": "2048",
+  "description": "2048 game with DAG graph visualization",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#faf8ef",
+  "theme_color": "#edc53f",
+  "icons": [
+    {
+      "src": "/icons/icon.svg",
+      "sizes": "512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
