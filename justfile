@@ -38,7 +38,7 @@ check:
     pnpm run typecheck
 
 # Production build: wasm engine, typecheck, then vite build
-build: build-wasm typecheck
+build: typecheck
     PORT={{port}} pnpm run build
 
 # Preview the production build
