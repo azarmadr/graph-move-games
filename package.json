@@ -11,15 +11,20 @@
     "build-wasm": "node scripts/build-wasm.mjs",
     "serve": "vite preview --config vite.config.ts --host 0.0.0.0",
     "typecheck:libs": "tsc --build",
-    "typecheck": "pnpm run typecheck:libs && tsc -p tsconfig.json --noEmit"
+    "typecheck": "pnpm run typecheck:libs && tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "bench": "vitest run src/bench/"
   },
   "private": true,
   "devDependencies": {
     "@types/node": "^26.4.0",
+    "happy-dom": "^20.12.0",
     "lightningcss-linux-arm64-gnu": "^1.33.0",
     "prettier": "^3.9.6",
     "typescript": "~7.0.2",
-    "vite": "^8.2.2"
+    "vite": "^8.2.2",
+    "vitest": "^4.1.11"
   },
   "dependencies": {
     "@dagrejs/dagre": "^3.1.1",

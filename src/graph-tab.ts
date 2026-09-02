@@ -1,29 +1,19 @@
-import dagre from "@dagrejs/dagre";
 import ForceGraph from "force-graph";
 import type { GraphData, Edge, GameInstance, Board } from "./wasmBridge";
 import { GraphControlsElement } from "./graph-controls";
-
-type Point = { x: number; y: number };
-
-type DagLayout = {
-  width: number;
-  height: number;
-  nodes: Record<string, Point>;
-  edges: Array<{ edge: Edge; edge_id: string; points: Point[] }>;
-};
-
-const NODE_SIZE = 104;
+import { TILE_COLORS, FALLBACK_TILE_COLOR } from "./theme";
+import { emitEvent } from "./events";
+import {
+  type DagLayout,
+  type Point,
+  NODE_SIZE,
+  nodeKey,
+  edgeKey,
+  makeDagLayout,
+} from "./dag-layout";
 const DOT_THRESHOLD = 0.5;
 const DOT_RADIUS = 12;
 const THRESHOLD_BAND = 0.15;
-
-function nodeKey(boardId: string) {
-  return `board:${boardId}`;
-}
-
-function edgeKey(edgeId: string) {
-  return `edge:${edgeId}`;
-}
 
 function edgeLabel(edge: Edge) {
   if (edge.kind.Move) return `Move ${edge.kind.Move}`;
@@ -37,21 +27,6 @@ function boardSummary(node: Board) {
   const tiles = node.tiles.map((cell) => cell.tile).join(" · ");
   return tiles || "Empty board";
 }
-
-const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
-  0: { bg: "#cdc1b4", fg: "#cdc1b4" },
-  2: { bg: "#eee4da", fg: "#776e65" },
-  4: { bg: "#ede0c8", fg: "#776e65" },
-  8: { bg: "#f2b179", fg: "#f9f6f2" },
-  16: { bg: "#f59563", fg: "#f9f6f2" },
-  32: { bg: "#f67c5f", fg: "#f9f6f2" },
-  64: { bg: "#f65e3b", fg: "#f9f6f2" },
-  128: { bg: "#edcf72", fg: "#f9f6f2" },
-  256: { bg: "#edcc61", fg: "#f9f6f2" },
-  512: { bg: "#edc850", fg: "#f9f6f2" },
-  1024: { bg: "#edc53f", fg: "#f9f6f2" },
-  2048: { bg: "#edc22e", fg: "#f9f6f2" },
-};
 
 function dominantTileColor(board: Board): string {
   let maxTile = 0;
@@ -67,78 +42,6 @@ function edgeColor(edge: Edge) {
 
 function lerp(a: number, b: number, t: number): number {
   return a + (b - a) * Math.max(0, Math.min(1, t));
-}
-
-function makeDagLayout(graphData: GraphData): DagLayout {
-  const layout = new dagre.graphlib.Graph({
-    directed: true,
-    multigraph: true,
-  });
-
-  layout.setGraph({
-    rankdir: "TB",
-    align: "UL",
-    nodesep: 48,
-    ranksep: 92,
-    edgesep: 24,
-    marginx: 56,
-    marginy: 56,
-  });
-  layout.setDefaultEdgeLabel(() => ({}));
-
-  const nodes = graphData.nodes;
-  const edges = graphData.edges;
-
-  for (const board_id in nodes) {
-    layout.setNode(nodeKey(board_id), {
-      width: NODE_SIZE,
-      height: NODE_SIZE,
-    });
-  }
-
-  for (const edge_id in edges) {
-    const edge = edges[edge_id];
-    const source = nodeKey(edge.from);
-    const target = nodeKey(edge.to);
-    if (
-      layout.hasNode(source) &&
-      layout.hasNode(target) &&
-      !layout.hasEdge(source, target, edgeKey(edge_id))
-    ) {
-      layout.setEdge(source, target, {}, edgeKey(edge_id));
-    }
-  }
-
-  dagre.layout(layout);
-
-  const positions: Record<string, Point> = {};
-  for (const board_id in nodes) {
-    const position = layout.node(nodeKey(board_id));
-    if (position) {
-      positions[nodeKey(board_id)] = { x: position.x, y: position.y };
-    }
-  }
-
-  const positionedEdges = Object.keys(edges).flatMap((edge_id) => {
-    const edge = edges[edge_id];
-    const points = layout.edge({
-      v: nodeKey(edge.from),
-      w: nodeKey(edge.to),
-      name: edgeKey(edge_id),
-    });
-    return points?.points?.length
-      ? [{ edge, edge_id, points: points.points }]
-      : [];
-  });
-
-  const graphSize = layout.graph();
-  const halfNode = NODE_SIZE / 2;
-  return {
-    width: Math.max((graphSize.width ?? 0) + halfNode, 320),
-    height: Math.max((graphSize.height ?? 0) + halfNode, 320),
-    nodes: positions,
-    edges: positionedEdges,
-  };
 }
 
 class ThumbnailCache {
@@ -192,7 +95,7 @@ class ThumbnailCache {
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const value = grid[r][c];
-        const colors = TILE_COLORS[value] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
+        const colors = TILE_COLORS[value] ?? FALLBACK_TILE_COLOR;
         const cx = padding + c * (cellW + gap);
         const cy = padding + r * (cellH + gap);
 
@@ -249,6 +152,7 @@ export class GraphTabElement extends HTMLElement {
     this._graphData = value;
     if (value) {
       this._loadingState = "loading";
+      this.render();
       this.scheduleLayout();
     } else {
       this._loadingState = "skeleton";
@@ -337,13 +241,7 @@ export class GraphTabElement extends HTMLElement {
         .enableNodeDrag(false);
     }
 
-    this.dispatchEvent(
-      new CustomEvent("physics-mode", {
-        detail: { enabled: this._physicsEnabled },
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    emitEvent(this, "physics-mode", { enabled: this._physicsEnabled });
   }
 
   get physicsEnabled(): boolean {
@@ -550,7 +448,7 @@ export class GraphTabElement extends HTMLElement {
         for (let r = 0; r < rows; r++) {
           for (let c = 0; c < cols; c++) {
             const value = grid[r][c];
-            const tc = TILE_COLORS[value] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
+            const tc = TILE_COLORS[value] ?? FALLBACK_TILE_COLOR;
             const cx = node.x - innerR + c * cellSize + gap;
             const cy = node.y - innerR + r * cellSize + gap;
             const s = cellSize - gap * 2;
@@ -739,13 +637,7 @@ export class GraphTabElement extends HTMLElement {
 
   private handleZoom({ k }: { k: number; x: number; y: number }) {
     if (this._graphControls) this._graphControls.zoom = k;
-    this.dispatchEvent(
-      new CustomEvent("zoom-level", {
-        detail: { zoom: k },
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    emitEvent(this, "zoom-level", { zoom: k });
   }
 
   private showHoverCard(node: any) {
