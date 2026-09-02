@@ -1,19 +1,7 @@
 import type { GameState, Direction } from "./wasmBridge";
-
-const TILE_COLORS: Record<number, { bg: string; fg: string }> = {
-  0: { bg: "#cdc1b4", fg: "#cdc1b4" },
-  2: { bg: "#eee4da", fg: "#776e65" },
-  4: { bg: "#ede0c8", fg: "#776e65" },
-  8: { bg: "#f2b179", fg: "#f9f6f2" },
-  16: { bg: "#f59563", fg: "#f9f6f2" },
-  32: { bg: "#f67c5f", fg: "#f9f6f2" },
-  64: { bg: "#f65e3b", fg: "#f9f6f2" },
-  128: { bg: "#edcf72", fg: "#f9f6f2" },
-  256: { bg: "#edcc61", fg: "#f9f6f2" },
-  512: { bg: "#edc850", fg: "#f9f6f2" },
-  1024: { bg: "#edc53f", fg: "#f9f6f2" },
-  2048: { bg: "#edc22e", fg: "#f9f6f2" },
-};
+import type { MoveResult } from "./types";
+import { TILE_COLORS, FALLBACK_TILE_COLOR, COLORS } from "./theme";
+import { emitEvent } from "./events";
 
 function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
   const ctx = canvas.getContext("2d")!;
@@ -44,7 +32,7 @@ function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
       const val = grid[r][c];
       const x = padding + c * (cellSize + gap);
       const y = padding + r * (cellSize + gap);
-      const colors = TILE_COLORS[val] ?? { bg: "#3c3a32", fg: "#f9f6f2" };
+      const colors = TILE_COLORS[val] ?? FALLBACK_TILE_COLOR;
 
       ctx.fillStyle = colors.bg;
       ctx.beginPath();
@@ -66,7 +54,7 @@ function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
 export class GameBoardElement extends HTMLElement {
   private _state: GameState | null = null;
   private _isGameOver: boolean = false;
-  private _lastMove: { moved: boolean; scoreGained: number } | null = null;
+  private _lastMove: MoveResult | null = null;
   private touchStart: { x: number; y: number } | null = null;
 
   set state(value: GameState | null) {
@@ -79,12 +67,12 @@ export class GameBoardElement extends HTMLElement {
     return this._state;
   }
 
-  set lastMove(value: { moved: boolean; scoreGained: number } | null) {
+  set lastMove(value: MoveResult | null) {
     this._lastMove = value;
     this.render();
   }
 
-  get lastMove(): { moved: boolean; scoreGained: number } | null {
+  get lastMove(): MoveResult | null {
     return this._lastMove;
   }
 
@@ -206,13 +194,7 @@ export class GameBoardElement extends HTMLElement {
   private bindEvents() {
     for (const btn of this.querySelectorAll<HTMLButtonElement>("[data-dir]")) {
       btn.addEventListener("click", () => {
-        this.dispatchEvent(
-          new CustomEvent("move", {
-            detail: { direction: btn.dataset.dir as Direction },
-            bubbles: true,
-            composed: true,
-          }),
-        );
+        emitEvent(this, "move", { direction: btn.dataset.dir as Direction });
       });
     }
 
@@ -220,12 +202,7 @@ export class GameBoardElement extends HTMLElement {
       '[data-action="new-game"]',
     )) {
       btn.addEventListener("click", () => {
-        this.dispatchEvent(
-          new CustomEvent("new-game", {
-            bubbles: true,
-            composed: true,
-          }),
-        );
+        emitEvent(this, "new-game");
       });
     }
 
@@ -264,13 +241,7 @@ export class GameBoardElement extends HTMLElement {
       direction = dy > 0 ? "Down" : "Up";
     }
 
-    this.dispatchEvent(
-      new CustomEvent("move", {
-        detail: { direction },
-        bubbles: true,
-        composed: true,
-      }),
-    );
+    emitEvent(this, "move", { direction });
     this.touchStart = null;
   };
 }
