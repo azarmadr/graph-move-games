@@ -1,3 +1,5 @@
+import { emitEvent } from "./events";
+
 type NavMarker = { id: string; label: string };
 
 export class GraphControlsElement extends HTMLElement {
@@ -127,13 +129,7 @@ export class GraphControlsElement extends HTMLElement {
       ".graph-controls-nav-button",
     )) {
       btn.addEventListener("click", () => {
-        this.dispatchEvent(
-          new CustomEvent("navigate-node", {
-            detail: { nodeId: btn.dataset.navTarget },
-            bubbles: true,
-            composed: true,
-          }),
-        );
+        emitEvent(this, "navigate-node", { nodeId: btn.dataset.navTarget });
       });
     }
 
@@ -142,13 +138,7 @@ export class GraphControlsElement extends HTMLElement {
     )) {
       btn.addEventListener("click", () => {
         const direction = btn.dataset.zoom;
-        this.dispatchEvent(
-          new CustomEvent("zoom-change", {
-            detail: { direction },
-            bubbles: true,
-            composed: true,
-          }),
-        );
+        emitEvent(this, "zoom-change", { direction });
       });
     }
 
@@ -159,13 +149,7 @@ export class GraphControlsElement extends HTMLElement {
         const hop = parseInt(btn.dataset.hop ?? "1", 10);
         this._hopDistance = hop;
         this.render();
-        this.dispatchEvent(
-          new CustomEvent("hop-change", {
-            detail: { hopDistance: this._hopDistance },
-            bubbles: true,
-            composed: true,
-          }),
-        );
+        emitEvent(this, "hop-change", { hopDistance: this._hopDistance });
       });
     }
 
@@ -174,12 +158,7 @@ export class GraphControlsElement extends HTMLElement {
     );
     if (physicsBtn) {
       physicsBtn.addEventListener("click", () => {
-        this.dispatchEvent(
-          new CustomEvent("physics-toggle", {
-            bubbles: true,
-            composed: true,
-          }),
-        );
+        emitEvent(this, "physics-toggle");
       });
     }
   }
