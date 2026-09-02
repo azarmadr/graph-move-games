@@ -22,8 +22,20 @@ build-wasm:
     pnpm run build-wasm
 
 # Run the Rust unit tests
-test:
+test-rust:
     cargo test -p game-core
+
+# Run the JavaScript/TypeScript tests
+test:
+    pnpm run test
+
+# Run tests in watch mode
+test-watch:
+    pnpm run test:watch
+
+# Run performance benchmarks
+bench:
+    pnpm run bench
 
 # Run the Vite dev server (builds wasm first; PORT/BASE_PATH defaults match .replit)
 dev:
@@ -38,7 +50,7 @@ check:
     pnpm run typecheck
 
 # Production build: wasm engine, typecheck, then vite build
-build: build-wasm typecheck
+build: typecheck
     PORT={{port}} pnpm run build
 
 # Preview the production build
