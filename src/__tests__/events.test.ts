@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { emitEvent } from "../events";
+import { emitEvent } from "../utils/events";
 
 describe("emitEvent", () => {
   it("dispatches a CustomEvent with bubbles and composed", () => {

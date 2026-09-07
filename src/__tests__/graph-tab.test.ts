@@ -42,9 +42,9 @@ vi.mock("force-graph", () => ({
   default: MockForceGraph,
 }));
 
-import { GraphTabElement } from "../graph-tab";
-import { GraphControlsElement } from "../graph-controls";
-import type { GraphData } from "../wasmBridge";
+import { GraphTabElement } from "../components/GraphTab";
+import { GraphControlsElement } from "../components/GraphControls";
+import type { GraphData } from "../utils/wasmBridge";
 
 if (!customElements.get("graph-tab"))
   customElements.define("graph-tab", GraphTabElement);

@@ -1,10 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { makeDagLayout, NODE_SIZE } from "../dag-layout";
-import { buildGrid } from "../types";
+import { makeDagLayout, NODE_SIZE } from "../utils/dagLayout";
+import { buildGrid } from "../utils/types";
 import { measure, printResult } from "./perf";
-import type { GraphData, Board } from "../wasmBridge";
+import type { GraphData, Board } from "../utils/wasmBridge";
 
 const DATA_DIR = join(import.meta.dirname, "../../.data");
 

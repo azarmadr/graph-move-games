@@ -1,9 +1,9 @@
 import "./index.css";
-import { GameAppElement } from "./game-app";
-import { GraphTabElement } from "./graph-tab";
-import { GraphControlsElement } from "./graph-controls";
-import { GameBoardElement } from "./game-board";
-import { ScoreDisplayElement } from "./score-display";
+import { GameAppElement } from "./components/GameApp";
+import { GraphTabElement } from "./components/GraphTab";
+import { GraphControlsElement } from "./components/GraphControls";
+import { GameBoardElement } from "./components/GameBoard";
+import { ScoreDisplayElement } from "./components/ScoreDisplay";
 
 function showError(error: unknown) {
   const target = document.querySelector("game-app") ?? document.body;
