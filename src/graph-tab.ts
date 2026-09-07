@@ -148,12 +148,22 @@ export class GraphTabElement extends HTMLElement {
   private _thumbnailCache = new ThumbnailCache();
   private _graphControls: GraphControlsElement | null = null;
 
+  private _logLines: string[] = [];
+
+  private dlog(msg: string) {
+    const t = performance.now().toFixed(0);
+    this._logLines.push(`${t}ms ${msg}`);
+  }
+
   set graphData(value: GraphData | null) {
     this._graphData = value;
     if (value) {
       this._loadingState = "loading";
+      this.dlog("graphData SET — calling render()");
       this.render();
+      this.dlog("render() done — calling scheduleLayout()");
       this.scheduleLayout();
+      this.dlog("scheduleLayout() done");
     } else {
       this._loadingState = "skeleton";
       this.render();
@@ -251,16 +261,21 @@ export class GraphTabElement extends HTMLElement {
   private scheduleLayout() {
     if (this._layoutScheduled) return;
     this._layoutScheduled = true;
+    this.dlog("scheduleLayout — queued rAF");
 
     requestAnimationFrame(() => {
+      this.dlog("rAF fired");
       this._layoutScheduled = false;
       if (!this._graphData) return;
 
       try {
+        this.dlog("makeDagLayout START");
         this._pendingLayout = makeDagLayout(this._graphData);
+        this.dlog("makeDagLayout DONE");
         this._loadingState = "ready";
         this.initForceGraph();
       } catch (e) {
+        this.dlog("ERROR: " + e);
         console.error("dagre layout failed:", e);
         this._loadingState = "error";
         this.render();
@@ -269,6 +284,7 @@ export class GraphTabElement extends HTMLElement {
   }
 
   private initForceGraph() {
+    this.dlog("initForceGraph START");
     const layout = this._pendingLayout;
     const graphData = this._graphData;
     if (!layout || !graphData) return;
@@ -341,8 +357,10 @@ export class GraphTabElement extends HTMLElement {
       });
     }
 
+    this.dlog("new ForceGraph...");
     const fg = new ForceGraph(container as HTMLElement);
     this._forceGraph = fg;
+    this.dlog("new ForceGraph done — chaining config...");
 
     fg.graphData({ nodes, links })
       .nodeId("id")
@@ -367,11 +385,13 @@ export class GraphTabElement extends HTMLElement {
       .d3Force("charge", null)
       .d3Force("link", null)
       .d3Force("center", null);
+    this.dlog("config chain done");
 
     for (const node of fg.graphData().nodes) {
       node.fx = node.x;
       node.fy = node.y;
     }
+    this.dlog("fx/fy set — scheduling zoomToFit");
 
     requestAnimationFrame(() => {
       fg.zoomToFit(400, 40);

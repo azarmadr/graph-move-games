@@ -1,3 +1,4 @@
+import { dlog } from "./debug";
 import {
   loadWasm,
   createGameWithConfig,
@@ -135,16 +136,24 @@ export class GameAppElement extends HTMLElement {
   }
 
   private async openGraphVisualization() {
+    dlog("openGraphVisualization START");
     this.activeTab = "graph";
+    dlog("activeTab set");
     this.render();
+    dlog("render() done — graph-tab in DOM");
 
     try {
+      dlog("awaiting getGraph + exportGraph...");
       const [graph, snapshot] = await Promise.all([getGraph(), exportGraph()]);
+      dlog("WASM done — nodes=" + Object.keys(graph.nodes).length);
       this.visualizationGraph = graph;
       this.visualizationGames = Object.values(snapshot.games);
       this.visualizationActiveGameId = this.state?.game.id ?? null;
+      dlog("calling linkGraphTab...");
       this.linkGraphTab();
+      dlog("linkGraphTab done");
     } catch (e) {
+      dlog("ERROR: " + e);
       console.error("graph visualization snapshot failed:", e);
     }
   }
@@ -153,6 +162,7 @@ export class GameAppElement extends HTMLElement {
     const tab = this.activeTab;
 
     this.innerHTML = `
+      <div id="dbg" style="position:fixed;bottom:0;left:0;right:0;z-index:9999;background:#000;color:#0f0;font:12px/1.4 monospace;padding:4px 8px;max-height:150px;overflow:auto;"></div>
       <div
         style="min-height:100vh;background:#faf8ef;display:flex;flex-direction:column;align-items:center;padding:32px 16px;font-family:'Clear Sans',Arial,sans-serif;"
       >
