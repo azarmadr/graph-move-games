@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import "../game-app";
+import "../components/GameApp";
 
 describe("GameAppElement", () => {
   let el: HTMLElement;

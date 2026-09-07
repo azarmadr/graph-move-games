@@ -1,5 +1,5 @@
-import type { GameState } from "./wasmBridge";
-import type { MoveResult } from "./types";
+import type { GameState } from "../utils/wasmBridge";
+import type { MoveResult } from "../utils/types";
 
 export class ScoreDisplayElement extends HTMLElement {
   private _state: GameState | null = null;
