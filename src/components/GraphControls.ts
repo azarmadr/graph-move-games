@@ -1,4 +1,4 @@
-import { emitEvent } from "./events";
+import { emitEvent } from "../utils/events";
 
 type NavMarker = { id: string; label: string };
 

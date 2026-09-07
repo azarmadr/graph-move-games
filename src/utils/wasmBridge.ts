@@ -77,7 +77,7 @@ let wasmModule: any = null;
 
 export async function loadWasm(): Promise<any> {
   if (wasmModule) return wasmModule;
-  const pkg = await import("../public/wasm-pkg/game_wasm.js");
+  const pkg = await import("../../public/wasm-pkg/game_wasm.js");
   await pkg.default();
   wasmModule = pkg;
   return pkg;
