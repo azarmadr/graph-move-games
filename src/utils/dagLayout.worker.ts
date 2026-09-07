@@ -1,4 +1,4 @@
-import { makeDagLayout } from "./dag-layout";
+import { makeDagLayout } from "./dagLayout";
 import type { GraphData } from "./wasmBridge";
 
 self.onmessage = (e: MessageEvent<GraphData>) => {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { TILE_COLORS, FALLBACK_TILE_COLOR, COLORS } from "../theme";
+import { TILE_COLORS, FALLBACK_TILE_COLOR, COLORS } from "../utils/theme";
 
 describe("TILE_COLORS", () => {
   it("has entries for all standard 2048 tile values", () => {

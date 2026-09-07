@@ -1,8 +1,8 @@
 import ForceGraph from "force-graph";
-import type { GraphData, Edge, GameInstance, Board } from "./wasmBridge";
-import { GraphControlsElement } from "./graph-controls";
-import { TILE_COLORS, FALLBACK_TILE_COLOR } from "./theme";
-import { emitEvent } from "./events";
+import type { GraphData, Edge, GameInstance, Board } from "../utils/wasmBridge";
+import { GraphControlsElement } from "./GraphControls";
+import { TILE_COLORS, FALLBACK_TILE_COLOR } from "../utils/theme";
+import { emitEvent } from "../utils/events";
 import {
   type DagLayout,
   type Point,
@@ -10,7 +10,7 @@ import {
   nodeKey,
   edgeKey,
   makeDagLayout,
-} from "./dag-layout";
+} from "../utils/dagLayout";
 const DOT_THRESHOLD = 0.5;
 const DOT_RADIUS = 12;
 const THRESHOLD_BAND = 0.15;
