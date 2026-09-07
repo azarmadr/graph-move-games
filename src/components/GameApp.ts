@@ -1,4 +1,4 @@
-import { dlog } from "./debug";
+import { dlog } from "../utils/debug";
 import {
   loadWasm,
   createGameWithConfig,
@@ -12,10 +12,10 @@ import {
   type GameConfig,
   type GameInstance,
   type GraphData,
-} from "./wasmBridge";
-import { GraphTabElement } from "./graph-tab";
-import { GameBoardElement } from "./game-board";
-import { ScoreDisplayElement } from "./score-display";
+} from "../utils/wasmBridge";
+import { GraphTabElement } from "./GraphTab";
+import { GameBoardElement } from "./GameBoard";
+import { ScoreDisplayElement } from "./ScoreDisplay";
 
 export class GameAppElement extends HTMLElement {
   private state: GameState | null = null;

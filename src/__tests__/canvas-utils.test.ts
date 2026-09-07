@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { buildGrid } from "../types";
-import type { Board } from "../wasmBridge";
+import { buildGrid } from "../utils/types";
+import type { Board } from "../utils/wasmBridge";
 
 function makeBoard(
   dim: [number, number],

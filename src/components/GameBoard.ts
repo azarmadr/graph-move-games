@@ -1,7 +1,7 @@
-import type { GameState, Direction } from "./wasmBridge";
-import type { MoveResult } from "./types";
-import { TILE_COLORS, FALLBACK_TILE_COLOR, COLORS } from "./theme";
-import { emitEvent } from "./events";
+import type { GameState, Direction } from "../utils/wasmBridge";
+import type { MoveResult } from "../utils/types";
+import { TILE_COLORS, FALLBACK_TILE_COLOR, COLORS } from "../utils/theme";
+import { emitEvent } from "../utils/events";
 
 function drawBoard(canvas: HTMLCanvasElement, state: GameState) {
   const ctx = canvas.getContext("2d")!;
