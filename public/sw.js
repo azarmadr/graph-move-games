@@ -21,7 +21,20 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
+  const url = new URL(event.request.url);
 
+  // Network-first for same-origin navigation requests (HTML)
+  if (
+    event.request.mode === "navigate" ||
+    (url.origin === self.location.origin && url.pathname.endsWith("/"))
+  ) {
+    event.respondWith(
+      fetch(event.request).catch(() => caches.match(event.request)),
+    );
+    return;
+  }
+
+  // Cache-first for static assets (JS, CSS, images, wasm)
   event.respondWith(
     caches.match(event.request).then((cached) => {
       const fetched = fetch(event.request)
