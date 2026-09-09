@@ -1,0 +1,10 @@
+[package]
+name = "merge-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Merge multiple 2048 game export files into one"
+
+[dependencies]
+game-core = { path = "../core" }
+petgraph = "0.8"
+serde_json = "1.0"
