@@ -57,6 +57,10 @@ build: typecheck
 serve:
     PORT={{port}} pnpm run serve
 
+# Merge all JSON exports in .data/ into a single file
+merge:
+    cargo run --bin merge-cli --release -- .data/merged.json .data/game-*.json
+
 # Remove build artifacts
 clean:
     rm -rf dist public/wasm-pkg

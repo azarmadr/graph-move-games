@@ -19,11 +19,59 @@ body {
   }
 }
 
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 20px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+.app-nav-title {
+  color: #776e65;
+  font-size: 28px;
+  font-weight: 800;
+  margin-right: 4px;
+}
+
+.app-nav-select {
+  padding: 6px 24px 6px 10px;
+  border: 1px solid #d8cbbb;
+  border-radius: 6px;
+  background: #f9f6f2;
+  color: #776e65;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  appearance: auto;
+}
+
+.app-nav-download {
+  width: 32px;
+  height: 32px;
+  border: 1px solid #d8cbbb;
+  border-radius: 6px;
+  background: transparent;
+  color: #9b8f82;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 120ms ease;
+}
+
+.app-nav-download:hover {
+  background: #ede0c8;
+}
+
 .app-tabs {
   display: flex;
   gap: 4px;
   padding: 4px;
-  margin-bottom: 20px;
   border: 1px solid #d8cbbb;
   border-radius: 999px;
   background: #ede0c8;

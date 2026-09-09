@@ -120,6 +120,11 @@ export async function exportGraph(): Promise<ExportData> {
 
 export async function importGraph(jsonText: string): Promise<ImportResult> {
   const m = await loadWasm();
-  const json = m.import_graph(jsonText);
+  let payload = jsonText;
+  try {
+    const parsed = JSON.parse(jsonText);
+    if (parsed.exportData) payload = JSON.stringify(parsed.exportData);
+  } catch {}
+  const json = m.import_graph(payload);
   return JSON.parse(json) as ImportResult;
 }

@@ -140,6 +140,26 @@ impl Engine {
         self.graph.graph_data()
     }
 
+    pub fn get_graph_store(&self) -> &GraphStore {
+        &self.graph
+    }
+
+    pub fn get_graph_store_mut(&mut self) -> &mut GraphStore {
+        &mut self.graph
+    }
+
+    pub fn set_games(&mut self, games: HashMap<GameId, GameInstance>) {
+        self.games = games;
+    }
+
+    pub fn get_next_game_nonce(&self) -> u64 {
+        self.next_game_nonce
+    }
+
+    pub fn set_next_game_nonce(&mut self, nonce: u64) {
+        self.next_game_nonce = nonce;
+    }
+
     pub fn get_state(&self, game_id: GameId) -> Result<GameState, String> {
         let game = self
             .games
