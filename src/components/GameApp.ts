@@ -1,3 +1,4 @@
+import { terminal } from "virtual:terminal";
 import { dlog } from "../utils/debug";
 import {
   loadWasm,
@@ -166,24 +167,26 @@ export class GameAppElement extends HTMLElement {
   }
 
   private async openGraphVisualization() {
-    dlog("openGraphVisualization START");
+    terminal.log("openGraphVisualization START");
+    const t0 = performance.now();
     this.activeTab = "graph";
-    dlog("activeTab set");
+    terminal.log("activeTab set, calling render()...");
     this.render();
-    dlog("render() done — graph-tab in DOM");
+    terminal.log(`render() done (${(performance.now() - t0).toFixed(1)}ms) — graph-tab in DOM`);
 
     try {
-      dlog("awaiting getGraph + exportGraph...");
+      terminal.log("awaiting getGraph + exportGraph...");
+      const t1 = performance.now();
       const [graph, snapshot] = await Promise.all([getGraph(), exportGraph()]);
-      dlog("WASM done — nodes=" + Object.keys(graph.nodes).length);
+      terminal.log(`WASM done (${(performance.now() - t1).toFixed(1)}ms) — nodes=${Object.keys(graph.nodes).length}, edges=${Object.keys(graph.edges).length}`);
       this.visualizationGraph = graph;
       this.visualizationGames = Object.values(snapshot.games);
       this.visualizationActiveGameId = this.state?.game.id ?? null;
-      dlog("calling linkGraphTab...");
+      terminal.log("calling linkGraphTab...");
       this.linkGraphTab();
-      dlog("linkGraphTab done");
+      terminal.log("linkGraphTab done");
     } catch (e) {
-      dlog("ERROR: " + e);
+      terminal.log("ERROR: " + e);
       console.error("graph visualization snapshot failed:", e);
     }
   }
@@ -329,19 +332,27 @@ export class GameAppElement extends HTMLElement {
       uploadInput.addEventListener("change", () => {
         const file = uploadInput.files?.[0];
         if (!file) return;
+        terminal.log(`File selected: ${file.name} (${file.size} bytes)`);
         const reader = new FileReader();
         reader.onload = async () => {
+          const t0 = performance.now();
           try {
             const text = reader.result as string;
+            terminal.log(`File read done (${(performance.now() - t0).toFixed(1)}ms, ${text.length} chars)`);
+            terminal.log("calling importGraph...");
+            const t1 = performance.now();
             const result = await importGraph(text);
+            terminal.log(`importGraph done (${(performance.now() - t1).toFixed(1)}ms) — success=${result.success}, games=${result.games.length}`);
             if (result.success && result.games.length > 0) {
               await this.refreshResumeGames();
               const first = result.games[0];
               this.config = { ...first.game.config };
               this.lastMove = null;
               this.setStateAndRender(first);
+              terminal.log("setStateAndRender done after import");
             }
           } catch (e) {
+            terminal.log("IMPORT ERROR: " + e);
             console.error("import failed:", e);
           }
           uploadInput.value = "";

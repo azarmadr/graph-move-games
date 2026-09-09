@@ -1,5 +1,6 @@
 import { defineConfig } from "vite";
 import path from "node:path";
+import Terminal from "vite-plugin-terminal";
 
 const rawPort = process.env.PORT;
 if (!rawPort) {
@@ -21,6 +22,11 @@ if (!basePath) {
 
 export default defineConfig({
   base: basePath,
+  plugins: [
+    Terminal({
+      output: ["terminal", "console"],
+    }),
+  ],
   resolve: {
     alias: {
       "@": path.resolve(import.meta.dirname, "src"),

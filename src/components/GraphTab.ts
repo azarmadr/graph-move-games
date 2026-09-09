@@ -3,6 +3,7 @@ import type { GraphData, Edge, GameInstance, Board } from "../utils/wasmBridge";
 import { GraphControlsElement } from "./GraphControls";
 import { TILE_COLORS, FALLBACK_TILE_COLOR } from "../utils/theme";
 import { emitEvent } from "../utils/events";
+import { terminal } from "virtual:terminal";
 import {
   type DagLayout,
   type Point,
@@ -11,6 +12,7 @@ import {
   edgeKey,
   makeDagLayout,
 } from "../utils/dagLayout";
+import { buildNavMarkers } from "../utils/navMarkers";
 const DOT_THRESHOLD = 0.5;
 const DOT_RADIUS = 12;
 const THRESHOLD_BAND = 0.15;
@@ -158,6 +160,9 @@ export class GraphTabElement extends HTMLElement {
   set graphData(value: GraphData | null) {
     this._graphData = value;
     if (value) {
+      const nodeCount = Object.keys(value.nodes).length;
+      const edgeCount = Object.keys(value.edges).length;
+      terminal.log(`graphData SET — ${nodeCount} nodes, ${edgeCount} edges`);
       this._loadingState = "loading";
       this.dlog("graphData SET — calling render()");
       this.render();
@@ -269,12 +274,16 @@ export class GraphTabElement extends HTMLElement {
       if (!this._graphData) return;
 
       try {
-        this.dlog("makeDagLayout START");
+        terminal.log("makeDagLayout START...");
+        const t0 = performance.now();
         this._pendingLayout = makeDagLayout(this._graphData);
+        const elapsed = performance.now() - t0;
+        terminal.log(`makeDagLayout DONE (${elapsed.toFixed(1)}ms)`);
         this.dlog("makeDagLayout DONE");
         this._loadingState = "ready";
         this.initForceGraph();
       } catch (e) {
+        terminal.log("LAYOUT ERROR: " + e);
         this.dlog("ERROR: " + e);
         console.error("dagre layout failed:", e);
         this._loadingState = "error";
@@ -284,6 +293,8 @@ export class GraphTabElement extends HTMLElement {
   }
 
   private initForceGraph() {
+    terminal.log("initForceGraph START");
+    const t0 = performance.now();
     this.dlog("initForceGraph START");
     const layout = this._pendingLayout;
     const graphData = this._graphData;
@@ -295,6 +306,7 @@ export class GraphTabElement extends HTMLElement {
     this.innerHTML = "";
     this._forceGraph = null;
     this._thumbnailCache.clear();
+    terminal.log("  cleared old state");
 
     const container = document.createElement("div");
     container.className = "graph-infinite-canvas-host";
@@ -304,17 +316,18 @@ export class GraphTabElement extends HTMLElement {
     inspector.className = "graph-inspector";
     inspector.innerHTML = `<summary>?</summary><div class="graph-inspector-body"><p>Select a node or edge to inspect.</p></div>`;
     this.appendChild(inspector);
+    terminal.log("1");
 
     this._graphControls = document.createElement(
       "graph-controls",
     ) as GraphControlsElement;
     this.appendChild(this._graphControls);
-    this._graphControls.markers = this.buildNavMarkers();
 
     this._graphControls.addEventListener("navigate-node", ((e: CustomEvent) => {
       this.centerOnNode(e.detail.nodeId);
     }) as EventListener);
 
+    terminal.log("2");
     this._graphControls.addEventListener("zoom-change", ((e: CustomEvent) => {
       this.zoomBy(e.detail.direction);
     }) as EventListener);
@@ -328,6 +341,8 @@ export class GraphTabElement extends HTMLElement {
     this._edgeWaypoints.clear();
     this._nodePositionMap.clear();
 
+    terminal.log("  building nodes array...");
+    const t1 = performance.now();
     const nodes = Object.keys(graphData.nodes).map((board_id) => {
       const pos = layout.nodes[nodeKey(board_id)];
       const nodeData = graphData.nodes[board_id];
@@ -356,8 +371,10 @@ export class GraphTabElement extends HTMLElement {
         target: targetKey,
       });
     }
+    terminal.log(`  nodes=${nodes.length}, links=${links.length} (${(performance.now() - t1).toFixed(1)}ms)`);
 
-    this.dlog("new ForceGraph...");
+    terminal.log("  creating ForceGraph instance...");
+    const t2 = performance.now();
     const fg = new ForceGraph(container as HTMLElement);
     this._forceGraph = fg;
     this.dlog("new ForceGraph done — chaining config...");
@@ -385,6 +402,7 @@ export class GraphTabElement extends HTMLElement {
       .d3Force("charge", null)
       .d3Force("link", null)
       .d3Force("center", null);
+    terminal.log(`  ForceGraph config done (${(performance.now() - t2).toFixed(1)}ms)`);
     this.dlog("config chain done");
 
     for (const node of fg.graphData().nodes) {
@@ -404,6 +422,17 @@ export class GraphTabElement extends HTMLElement {
     });
 
     this.updateInspector();
+    terminal.log(`initForceGraph COMPLETE (${(performance.now() - t0).toFixed(1)}ms total)`);
+
+    requestAnimationFrame(() => {
+      const t3 = performance.now();
+      this._graphControls!.markers = buildNavMarkers(
+        graphData,
+        this._games,
+        this._activeGameId,
+      );
+      terminal.log(`buildNavMarkers deferred (${(performance.now() - t3).toFixed(1)}ms)`);
+    });
   }
 
   private renderNodeCanvas(
@@ -727,85 +756,6 @@ export class GraphTabElement extends HTMLElement {
           : ""
       }
     `;
-  }
-
-  private buildNavMarkers(): Array<{ id: string; label: string }> {
-    const markers: Array<{ id: string; label: string }> = [];
-    const graph = this._graphData;
-    if (!graph) return markers;
-
-    if (this._activeGameId) {
-      const game = this._games.find((g) => g.id === this._activeGameId);
-      if (game) {
-        markers.push({
-          id: nodeKey(game.source_board_id),
-          label: "Root",
-        });
-      }
-    }
-
-    const roots = new Set<string>();
-    for (const game of this._games) {
-      roots.add(game.source_board_id);
-    }
-    for (const rootId of roots) {
-      const key = nodeKey(rootId);
-      if (!markers.some((m) => m.id === key)) {
-        markers.push({ id: key, label: "Root" });
-      }
-    }
-
-    const tails = new Set<string>();
-    for (const game of this._games) {
-      if (!tails.has(game.current_board_id)) {
-        tails.add(game.current_board_id);
-        const key = nodeKey(game.current_board_id);
-        if (!markers.some((m) => m.id === key)) {
-          const suffix = this._games.length > 1 ? ` (${game.score})` : "";
-          markers.push({ id: key, label: `Tail${suffix}` });
-        }
-      }
-    }
-
-    const adj = new Map<string, string[]>();
-    for (const edge of Object.values(graph.edges)) {
-      const from = edge.from;
-      if (!adj.has(from)) adj.set(from, []);
-      adj.get(from)!.push(edge.to);
-    }
-
-    const depth = new Map<string, number>();
-    const queue: string[] = [...roots];
-    for (const r of queue) depth.set(r, 0);
-
-    while (queue.length > 0) {
-      const curr = queue.shift()!;
-      const d = depth.get(curr) ?? 0;
-      for (const next of adj.get(curr) ?? []) {
-        const prev = depth.get(next);
-        if (prev === undefined || d + 1 > prev) {
-          depth.set(next, d + 1);
-          queue.push(next);
-        }
-      }
-    }
-
-    let deepestId: string | null = null;
-    let maxDepth = -1;
-    for (const [id, d] of depth) {
-      if (d > maxDepth) {
-        maxDepth = d;
-        deepestId = id;
-      }
-    }
-    if (deepestId && maxDepth > 0) {
-      const key = nodeKey(deepestId);
-      if (!markers.some((m) => m.id === key)) {
-        markers.push({ id: key, label: `Deepest (${maxDepth})` });
-      }
-    }
-
-    return markers;
   }
 
   private render() {
