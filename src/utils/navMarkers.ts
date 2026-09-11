@@ -76,8 +76,9 @@ export function buildNavMarkers(
   }
   if (deepestId && maxDepth > 0) {
     const key = nodeKey(deepestId);
-    if (!markers.some((m) => m.id === key)) {
-      markers.push({ id: key, label: `Deepest (${maxDepth})` });
+    const label = `Deepest (${maxDepth})`;
+    if (!markers.some((m) => m.label === label)) {
+      markers.push({ id: key, label });
     }
   }
 

@@ -1,9 +1,10 @@
 import ForceGraph from "force-graph";
 import type { GraphData, Edge, GameInstance, Board } from "../utils/wasmBridge";
+import type { ForceGraphNode, ForceGraphLink } from "../utils/forceGraphTypes";
 import { GraphControlsElement } from "./GraphControls";
-import { TILE_COLORS, FALLBACK_TILE_COLOR } from "../utils/theme";
+import { TILE_COLORS, FALLBACK_TILE_COLOR, COLORS } from "../utils/theme";
 import { emitEvent } from "../utils/events";
-import { terminal } from "virtual:terminal";
+import { terminal } from "../utils/terminal";
 import {
   type DagLayout,
   type Point,
@@ -13,9 +14,169 @@ import {
   makeDagLayout,
 } from "../utils/dagLayout";
 import { buildNavMarkers } from "../utils/navMarkers";
+import {
+  drawBoard,
+  drawBoardBackground,
+  drawSelectionHighlight,
+} from "../utils/canvasBoard";
+
 const DOT_THRESHOLD = 0.5;
 const DOT_RADIUS = 12;
 const THRESHOLD_BAND = 0.15;
+
+const sheet = new CSSStyleSheet();
+sheet.replaceSync(/* css */ `
+  :host {
+    display: block;
+    position: relative;
+    min-height: 500px;
+  }
+
+  .canvas-host {
+    width: 100%;
+    height: 100%;
+    min-height: 500px;
+  }
+
+  .canvas-host canvas {
+    display: block;
+  }
+
+  .skeleton {
+    display: grid;
+    min-height: 260px;
+    place-items: center;
+    gap: 12px;
+    padding: 24px;
+    color: var(--text-secondary, #9b8f82);
+    font-size: 14px;
+  }
+
+  .skeleton-spinner {
+    width: 32px;
+    height: 32px;
+    border: 3px solid var(--border, #d8cbbb);
+    border-top-color: var(--board-outer, #8f7a66);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .error {
+    display: grid;
+    min-height: 260px;
+    place-items: center;
+    gap: 12px;
+    padding: 24px;
+    color: var(--text-secondary, #9b8f82);
+    font-size: 14px;
+  }
+
+  .error-retry {
+    padding: 8px 16px;
+    border: 1px solid var(--board-outer, #8f7a66);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--board-outer, #8f7a66);
+    font: inherit;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+
+  .empty {
+    display: grid;
+    min-height: 260px;
+    place-items: center;
+    padding: 24px;
+    color: var(--text-secondary, #9b8f82);
+    font-size: 14px;
+  }
+
+  .hover-card {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    display: grid;
+    gap: 4px;
+    max-width: 240px;
+    padding: 10px 12px;
+    border-radius: 8px;
+    background: rgba(42, 42, 69, 0.94);
+    color: var(--surface, #f9f6f2);
+    font-size: 12px;
+    pointer-events: none;
+    z-index: 5;
+  }
+
+  .hover-card span {
+    color: rgba(249, 246, 242, 0.72);
+  }
+
+  .inspector {
+    position: absolute;
+    bottom: 12px;
+    right: 12px;
+    z-index: 10;
+  }
+
+  .inspector summary {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: rgba(42, 42, 69, 0.92);
+    color: var(--surface, #f9f6f2);
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
+    list-style: none;
+  }
+
+  .inspector summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .inspector-body {
+    position: absolute;
+    bottom: 40px;
+    right: 0;
+    min-width: 200px;
+    max-width: 280px;
+    padding: 14px;
+    border-radius: 10px;
+    background: rgba(42, 42, 69, 0.94);
+    color: var(--surface, #f9f6f2);
+    font-size: 12px;
+  }
+
+  .inspector-body h3 {
+    margin: 6px 0;
+    color: var(--accent-cyan, #4cc9f0);
+    font-size: 13px;
+    word-break: break-all;
+  }
+
+  .inspector-body p {
+    margin: 4px 0;
+    line-height: 1.4;
+    color: rgba(249, 246, 242, 0.8);
+  }
+
+  .eyebrow {
+    margin: 0;
+    color: var(--accent-pink, #f72585);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+`);
 
 function edgeLabel(edge: Edge) {
   if (edge.kind.Move) return `Move ${edge.kind.Move}`;
@@ -39,7 +200,7 @@ function dominantTileColor(board: Board): string {
 }
 
 function edgeColor(edge: Edge) {
-  return edge.kind.Move ? "#4cc9f0" : "#f72585";
+  return edge.kind.Move ? COLORS.selected : COLORS.current;
 }
 
 function lerp(a: number, b: number, t: number): number {
@@ -65,13 +226,6 @@ class ThumbnailCache {
     if (!ctx) return null;
 
     const [rows, cols] = board.dim;
-    const grid = Array.from({ length: rows }, () => Array(cols).fill(0));
-    for (const cell of board.tiles) {
-      if (grid[cell.pos.r]?.[cell.pos.c] !== undefined) {
-        grid[cell.pos.r][cell.pos.c] = cell.tile;
-      }
-    }
-
     const gap = 3;
     const padding = 4;
     const innerW = NODE_SIZE - padding * 2;
@@ -79,39 +233,27 @@ class ThumbnailCache {
     const cellW = (innerW - gap * (cols - 1)) / cols;
     const cellH = (innerH - gap * (rows - 1)) / rows;
 
-    ctx.fillStyle = "#8f7a66";
+    ctx.fillStyle = COLORS.boardOuter;
     ctx.beginPath();
     ctx.roundRect(0, 0, NODE_SIZE, NODE_SIZE, 12);
     ctx.fill();
 
-    ctx.fillStyle = "#bbada0";
-    ctx.beginPath();
-    ctx.roundRect(padding, padding, innerW, innerH, 6);
-    ctx.fill();
-
-    const fontScale = Math.max(8, Math.min(15, cellW * 0.65));
-    ctx.font = `800 ${fontScale}px "Clear Sans", Arial, sans-serif`;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < cols; c++) {
-        const value = grid[r][c];
-        const colors = TILE_COLORS[value] ?? FALLBACK_TILE_COLOR;
-        const cx = padding + c * (cellW + gap);
-        const cy = padding + r * (cellH + gap);
-
-        ctx.fillStyle = colors.bg;
-        ctx.beginPath();
-        ctx.roundRect(cx, cy, cellW, cellH, 3);
-        ctx.fill();
-
-        if (value > 0) {
-          ctx.fillStyle = colors.fg;
-          ctx.fillText(String(value), cx + cellW / 2, cy + cellH / 2);
-        }
-      }
-    }
+    drawBoardBackground(ctx, board, {
+      x: padding,
+      y: padding,
+      cellSize: Math.min(cellW, cellH),
+      gap,
+      padding: 0,
+      cornerRadius: 6,
+    });
+    drawBoard(ctx, board, {
+      x: padding,
+      y: padding,
+      cellSize: Math.min(cellW, cellH),
+      gap,
+      cornerRadius: 3,
+      fontSize: Math.max(8, Math.min(15, cellW * 0.65)),
+    });
 
     const promise = createImageBitmap(offscreen);
     this._pending.set(boardId, promise);
@@ -139,7 +281,7 @@ export class GraphTabElement extends HTMLElement {
   private selectedId: string | null = null;
   private hoveredId: string | null = null;
 
-  private _forceGraph: any = null;
+  private _forceGraph: ReturnType<typeof ForceGraph> | null = null;
   private _physicsEnabled = false;
   private _mouseX = 0;
   private _mouseY = 0;
@@ -158,6 +300,7 @@ export class GraphTabElement extends HTMLElement {
   }
 
   set graphData(value: GraphData | null) {
+    if (value === this._graphData) return;
     this._graphData = value;
     if (value) {
       const nodeCount = Object.keys(value.nodes).length;
@@ -206,6 +349,8 @@ export class GraphTabElement extends HTMLElement {
   }
 
   connectedCallback() {
+    this.attachShadow({ mode: "open" });
+    this.shadowRoot!.adoptedStyleSheets = [sheet];
     this.render();
   }
 
@@ -303,25 +448,25 @@ export class GraphTabElement extends HTMLElement {
     if (this._forceGraph) {
       this._forceGraph._destructor();
     }
-    this.innerHTML = "";
+    this.shadowRoot!.innerHTML = "";
     this._forceGraph = null;
     this._thumbnailCache.clear();
     terminal.log("  cleared old state");
 
     const container = document.createElement("div");
-    container.className = "graph-infinite-canvas-host";
-    this.appendChild(container);
+    container.className = "canvas-host";
+    this.shadowRoot!.appendChild(container);
 
     const inspector = document.createElement("details");
-    inspector.className = "graph-inspector";
-    inspector.innerHTML = `<summary>?</summary><div class="graph-inspector-body"><p>Select a node or edge to inspect.</p></div>`;
-    this.appendChild(inspector);
+    inspector.className = "inspector";
+    inspector.innerHTML = /* html */ `<summary>?</summary><div class="inspector-body"><p>Select a node or edge to inspect.</p></div>`;
+    this.shadowRoot!.appendChild(inspector);
     terminal.log("1");
 
     this._graphControls = document.createElement(
       "graph-controls",
     ) as GraphControlsElement;
-    this.appendChild(this._graphControls);
+    this.shadowRoot!.appendChild(this._graphControls);
 
     this._graphControls.addEventListener("navigate-node", ((e: CustomEvent) => {
       this.centerOnNode(e.detail.nodeId);
@@ -356,7 +501,7 @@ export class GraphTabElement extends HTMLElement {
       };
     });
 
-    const links: any[] = [];
+    const links: ForceGraphLink[] = [];
     for (const edge_id of Object.keys(graphData.edges)) {
       const edge = graphData.edges[edge_id];
       const sourceKey = nodeKey(edge.from);
@@ -444,7 +589,7 @@ export class GraphTabElement extends HTMLElement {
   }
 
   private renderNodeCanvas(
-    node: any,
+    node: ForceGraphNode,
     ctx: CanvasRenderingContext2D,
     globalScale: number,
   ) {
@@ -467,13 +612,7 @@ export class GraphTabElement extends HTMLElement {
       ctx.fillStyle = color;
       ctx.fill();
       if (isSelected || isCurrent || isSource) {
-        ctx.strokeStyle = isSelected
-          ? "#4cc9f0"
-          : isCurrent
-            ? "#f72585"
-            : "#4cc9f0";
-        ctx.lineWidth = isSelected ? 2.5 : isCurrent ? 2 : 1.5;
-        ctx.stroke();
+        drawSelectionHighlight(ctx, isSelected, isCurrent, isSource);
       }
     } else if (scale > DOT_THRESHOLD + THRESHOLD_BAND) {
       this.drawThumbnail(node, ctx, board, isSelected, isCurrent, isSource);
@@ -520,19 +659,13 @@ export class GraphTabElement extends HTMLElement {
       }
 
       if (isSelected || isCurrent || isSource) {
-        ctx.strokeStyle = isSelected
-          ? "#4cc9f0"
-          : isCurrent
-            ? "#f72585"
-            : "#4cc9f0";
-        ctx.lineWidth = isSelected ? 2.5 : isCurrent ? 2 : 1.5;
-        ctx.stroke();
+        drawSelectionHighlight(ctx, isSelected, isCurrent, isSource);
       }
     }
   }
 
   private drawThumbnail(
-    node: any,
+    node: ForceGraphNode,
     ctx: CanvasRenderingContext2D,
     board: Board,
     isSelected: boolean,
@@ -544,7 +677,7 @@ export class GraphTabElement extends HTMLElement {
       ctx.drawImage(bmp, node.x - NODE_SIZE / 2, node.y - NODE_SIZE / 2);
     } else {
       this._thumbnailCache.render(node.boardId, board);
-      ctx.fillStyle = "#8f7a66";
+      ctx.fillStyle = COLORS.boardOuter;
       ctx.beginPath();
       ctx.roundRect(
         node.x - NODE_SIZE / 2,
@@ -557,18 +690,12 @@ export class GraphTabElement extends HTMLElement {
     }
 
     if (isSelected || isCurrent || isSource) {
-      ctx.strokeStyle = isSelected
-        ? "#4cc9f0"
-        : isCurrent
-          ? "#f72585"
-          : "#4cc9f0";
-      ctx.lineWidth = isSelected ? 2.5 : isCurrent ? 2 : 1.5;
-      ctx.stroke();
+      drawSelectionHighlight(ctx, isSelected, isCurrent, isSource);
     }
   }
 
   private renderNodePointer(
-    node: any,
+    node: ForceGraphNode,
     paintColor: string,
     ctx: CanvasRenderingContext2D,
     globalScale: number,
@@ -589,7 +716,7 @@ export class GraphTabElement extends HTMLElement {
   }
 
   private renderLinkCanvas(
-    link: any,
+    link: ForceGraphLink,
     ctx: CanvasRenderingContext2D,
     _globalScale: number,
   ) {
@@ -653,7 +780,7 @@ export class GraphTabElement extends HTMLElement {
   }
 
   private renderLinkPointer(
-    link: any,
+    link: ForceGraphLink,
     paintColor: string,
     ctx: CanvasRenderingContext2D,
     _globalScale: number,
@@ -672,12 +799,12 @@ export class GraphTabElement extends HTMLElement {
     ctx.stroke();
   }
 
-  private handleNodeClick(node: any) {
+  private handleNodeClick(node: ForceGraphNode) {
     this.selectedId = node.id;
     this.updateInspector();
   }
 
-  private handleNodeHover(node: any) {
+  private handleNodeHover(node: ForceGraphNode) {
     if (node) {
       this.hoveredId = node.id;
       this.showHoverCard(node);
@@ -687,7 +814,7 @@ export class GraphTabElement extends HTMLElement {
     }
   }
 
-  private handleLinkClick(link: any) {
+  private handleLinkClick(link: ForceGraphLink) {
     this.selectedId = link.id;
     this.updateInspector();
   }
@@ -697,16 +824,16 @@ export class GraphTabElement extends HTMLElement {
     emitEvent(this, "zoom-level", { zoom: k });
   }
 
-  private showHoverCard(node: any) {
+  private showHoverCard(node: ForceGraphNode) {
     this.removeHoverCard();
 
     const card = document.createElement("div");
-    card.className = "graph-hover-card";
-    card.innerHTML = `<strong>Board ${node.id.slice(0, 16)}</strong><span>${boardSummary(node.board)}</span>`;
+    card.className = "hover-card";
+    card.innerHTML = /* html */ `<strong>Board ${node.id.slice(0, 16)}</strong><span>${boardSummary(node.board)}</span>`;
     card.style.left = `${this._mouseX + 16}px`;
     card.style.top = `${this._mouseY + 16}px`;
 
-    const host = this.querySelector<HTMLElement>(".graph-infinite-canvas-host");
+    const host = this.shadowRoot!.querySelector<HTMLElement>(".canvas-host");
     if (host) {
       host.appendChild(card);
       this._hoverCard = card;
@@ -721,11 +848,11 @@ export class GraphTabElement extends HTMLElement {
   }
 
   private updateInspector() {
-    const inspector = this.querySelector<HTMLElement>(".graph-inspector");
+    const inspector = this.shadowRoot!.querySelector<HTMLElement>(".inspector");
     if (!inspector) return;
 
     const graphData = this._graphData;
-    const body = inspector.querySelector<HTMLElement>(".graph-inspector-body");
+    const body = inspector.querySelector<HTMLElement>(".inspector-body");
     if (!body || !graphData) return;
 
     const selectedNode = this.selectedId?.startsWith("board:")
@@ -741,7 +868,7 @@ export class GraphTabElement extends HTMLElement {
       ? this.selectedId!.slice("board:".length)
       : null;
 
-    body.innerHTML = `
+    body.innerHTML = /* html */ `
       ${
         selectedNode
           ? `<p class="eyebrow">Selected board</p>
@@ -768,42 +895,42 @@ export class GraphTabElement extends HTMLElement {
 
   private render() {
     if (this._loadingState === "skeleton") {
-      this.innerHTML = `
-        <div class="graph-skeleton">
-          <div class="graph-skeleton-spinner"></div>
-          <div class="graph-skeleton-text">Loading graph...</div>
+      this.shadowRoot!.innerHTML = /* html */ `
+        <div class="skeleton">
+          <div class="skeleton-spinner"></div>
+          <div>Loading graph...</div>
         </div>
       `;
       return;
     }
 
     if (this._loadingState === "loading") {
-      this.innerHTML = `
-        <div class="graph-skeleton">
-          <div class="graph-skeleton-spinner"></div>
-          <div class="graph-skeleton-text">Computing layout...</div>
+      this.shadowRoot!.innerHTML = /* html */ `
+        <div class="skeleton">
+          <div class="skeleton-spinner"></div>
+          <div>Computing layout...</div>
         </div>
       `;
       return;
     }
 
     if (this._loadingState === "error") {
-      this.innerHTML = `
-        <div class="graph-error">
-          <div class="graph-error-text">Failed to load graph data</div>
-          <button class="graph-error-retry" type="button">Retry</button>
+      this.shadowRoot!.innerHTML = /* html */ `
+        <div class="error">
+          <div>Failed to load graph data</div>
+          <button class="error-retry" type="button">Retry</button>
         </div>
       `;
       return;
     }
 
     if (!this._graphData) {
-      this.innerHTML = `<div class="graph-empty">Build the graph by making a move.</div>`;
+      this.shadowRoot!.innerHTML = /* html */ `<div class="empty">Build the graph by making a move.</div>`;
       return;
     }
 
     if (!this._forceGraph) {
-      this.innerHTML = `<div class="graph-empty">No graph nodes yet.</div>`;
+      this.shadowRoot!.innerHTML = /* html */ `<div class="empty">No graph nodes yet.</div>`;
     }
   }
 }

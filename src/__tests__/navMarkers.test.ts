@@ -130,7 +130,7 @@ describe("buildNavMarkers", () => {
       ];
 
       const start = performance.now();
-      const markers = buildNavMarkers(nodes as any, games, undefined);
+      const markers = buildNavMarkers({ nodes, edges } as GraphData, games, undefined);
       const elapsed = performance.now() - start;
 
       expect(markers.length).toBeGreaterThan(0);
@@ -158,7 +158,7 @@ describe("buildNavMarkers", () => {
       ];
 
       const start = performance.now();
-      buildNavMarkers(nodes as any, games, undefined);
+      buildNavMarkers({ nodes, edges } as GraphData, games, undefined);
       const elapsed = performance.now() - start;
 
       expect(elapsed).toBeLessThan(50);
