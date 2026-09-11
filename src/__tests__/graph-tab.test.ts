@@ -88,13 +88,13 @@ describe("GraphTabElement — pressing graph tab", () => {
 
   it("shows skeleton on mount", () => {
     expect(el.loadingState).toBe("skeleton");
-    expect(el.innerHTML).toContain("graph-skeleton");
+    expect(el.shadowRoot!.innerHTML).toContain('class="skeleton"');
   });
 
   it("shows loading after graphData is set", () => {
     el.graphData = smallGraph;
     expect(el.loadingState).toBe("loading");
-    expect(el.innerHTML).toContain("Computing layout");
+    expect(el.shadowRoot!.innerHTML).toContain("Computing layout");
   });
 
   it("dagre runs and produces a layout", () => {
@@ -106,7 +106,7 @@ describe("GraphTabElement — pressing graph tab", () => {
       vi.advanceTimersByTime(50);
 
       expect(el.loadingState).toBe("ready");
-      expect(el.innerHTML).toContain("graph-infinite-canvas-host");
+      expect(el.shadowRoot!.innerHTML).toContain('class="canvas-host"');
     } finally {
       vi.useRealTimers();
     }
