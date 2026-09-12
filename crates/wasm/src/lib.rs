@@ -192,4 +192,23 @@ mod tests {
         let layout = build_graph_layout(&engine);
         assert!(!layout.nodes.is_empty());
     }
+
+    #[test]
+    fn visgraph_layout_applies_positions() {
+        ENGINE.with(|e| {
+            let mut engine = e.borrow_mut();
+            let game = engine.create_game(&GameConfig::default()).unwrap();
+            engine.make_move(game.game.id, Direction::Up).unwrap();
+            engine.make_move(game.game.id, Direction::Down).unwrap();
+        });
+        let graph = get_graph(true, "visgraph".to_string()).unwrap();
+        let layout: GraphLayout = serde_json::from_str(&graph).unwrap();
+        eprintln!("{layout:?} {graph:?}");
+
+        assert!(!layout.edges.is_empty());
+        for node in layout.nodes.values() {
+            assert!(node.x.is_some());
+            assert!(node.y.is_some());
+        }
+    }
 }

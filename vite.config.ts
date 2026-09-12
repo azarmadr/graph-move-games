@@ -24,6 +24,7 @@ export default defineConfig({
   base: basePath,
   plugins: [
     Terminal({
+      // console: "terminal",
       output: ["terminal", "console"],
     }),
   ],
@@ -38,7 +39,7 @@ export default defineConfig({
     emptyOutDir: true,
   },
   server: {
-    watch: { ignored: ["**/.jj/**"] },
+    watch: { ignored: ["**/target/**", "**/.jj/**"] },
     port,
     strictPort: true,
     host: "0.0.0.0",
