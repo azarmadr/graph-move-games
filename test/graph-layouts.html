@@ -55,14 +55,9 @@
     .empty-row td { color: #9b8f82; font-style: italic; text-align: center; }
 
     .graph-area {
-      flex: 1 1 auto; min-height: 0; display: flex;
+      flex: 1 1 auto; min-height: 0;
       border: 1px solid #3a3a5c; border-radius: 10px;
       background: #2a2a45; position: relative; overflow: hidden;
-    }
-    .graph-area > graph-tab { flex: 1 1 auto; min-height: 300px; display: block; }
-    .graph-placeholder {
-      display: flex; align-items: center; justify-content: center;
-      width: 100%; color: #9b8f82; font-size: 14px;
     }
   </style>
 </head>
@@ -113,7 +108,6 @@
   </details>
 
   <div class="graph-area" id="graph-area">
-    <div class="graph-placeholder" id="graph-placeholder">Loading graph...</div>
   </div>
 
   <script type="module">
@@ -139,7 +133,6 @@
     let currentMode = "dagre";
     let currentPrune = false;
     let graphTab = null;
-    let graphPlaceholder = document.getElementById("graph-placeholder");
 
     const graphSelect = document.getElementById("graph-select");
     const layoutGroup = document.getElementById("layout-group");
@@ -207,12 +200,7 @@
 
     function createGraphTab() {
       destroyGraphTab();
-      if (graphPlaceholder) {
-        graphPlaceholder.remove();
-        graphPlaceholder = null;
-      }
       graphTab = document.createElement("graph-tab");
-      graphTab.layoutMode = currentMode;
       graphTab.addEventListener("layout-performance", onLayoutPerformance);
       graphArea.appendChild(graphTab);
     }
@@ -225,6 +213,7 @@
       statusEl.textContent = "Loading graph...";
 
       try {
+        createGraphTab();
         const resp = await fetch(url);
         const data = await resp.json();
         const payload = data.exportData ? JSON.stringify(data.exportData) : JSON.stringify(data);
@@ -233,11 +222,13 @@
 
         const graphJson = get_graph(currentPrune, currentMode);
         const graphData = JSON.parse(graphJson);
+        console.log({currentPrune, currentMode, graphData});
 
         const nodeCount = Object.keys(graphData.nodes).length;
         const edgeCount = Object.keys(graphData.edges).length;
         statusEl.textContent = `${nodeCount} nodes, ${edgeCount} edges — ${currentMode}${currentPrune ? " (pruned)" : ""}`;
 
+        graphTab.layoutMode = currentMode;
         graphTab.graphData = graphData;
       } catch (e) {
         statusEl.textContent = `Error: ${e.message}`;
@@ -246,7 +237,6 @@
     }
 
     async function reloadGraph() {
-      destroyGraphTab();
       await loadGraphIntoComponent();
     }
 
@@ -308,7 +298,6 @@
         return;
       }
 
-      createGraphTab();
       await loadGraphIntoComponent();
     }
 

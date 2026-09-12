@@ -248,8 +248,6 @@ sheet.replaceSync(/* css */ `
 `);
 
 export class GraphControlsElement extends HTMLElement {
-  private _hopDistance: number = 1;
-  private _maxHopDistance: number = 10;
   private _markers: NavMarker[] = [];
   private _zoom: number = 1;
   private _physicsEnabled: boolean = false;
@@ -262,15 +260,6 @@ export class GraphControlsElement extends HTMLElement {
     if (saved && LAYOUT_MODES.includes(saved as LayoutMode)) {
       this._layoutMode = saved as LayoutMode;
     }
-  }
-
-  get hopDistance(): number {
-    return this._hopDistance;
-  }
-
-  set hopDistance(value: number) {
-    this._hopDistance = Math.max(1, Math.min(value, this._maxHopDistance));
-    this.render();
   }
 
   set markers(value: NavMarker[]) {
@@ -341,12 +330,6 @@ export class GraphControlsElement extends HTMLElement {
           </div>
         </div>
         <div class="section">
-          <span class="label">Show hops:</span>
-          <div class="hop-buttons">
-            ${this.createHopButtons()}
-          </div>
-        </div>
-        <div class="section">
           <span class="label">Physics:</span>
           <button
             type="button"
@@ -403,23 +386,6 @@ export class GraphControlsElement extends HTMLElement {
       .join("");
   }
 
-  private createHopButtons(): string {
-    const buttons = [];
-    for (let i = 1; i <= this._maxHopDistance; i++) {
-      const isActive = i === this._hopDistance;
-      buttons.push(/* html */ `
-        <button
-          type="button"
-          class="hop-button ${isActive ? "active" : ""}"
-          data-hop="${i}"
-        >
-          ${i}
-        </button>
-      `);
-    }
-    return buttons.join("");
-  }
-
   private bindEvents() {
     const toggleBtn = this.shadowRoot!.querySelector<HTMLButtonElement>(
       "[data-toggle-collapse]",
@@ -451,17 +417,6 @@ export class GraphControlsElement extends HTMLElement {
       btn.addEventListener("click", () => {
         const direction = btn.dataset.zoom;
         emitEvent(this, "zoom-change", { direction });
-      });
-    }
-
-    for (const btn of this.shadowRoot!.querySelectorAll<HTMLButtonElement>(
-      ".hop-button",
-    )) {
-      btn.addEventListener("click", () => {
-        const hop = parseInt(btn.dataset.hop ?? "1", 10);
-        this._hopDistance = hop;
-        this.render();
-        emitEvent(this, "hop-change", { hopDistance: this._hopDistance });
       });
     }
 

@@ -1,6 +1,5 @@
+import { GraphLayout, type WasmGraphData } from "../components/GraphLayout";
 import { describe, it, expect } from "vitest";
-import { GraphLayout } from "../components/GraphLayout";
-import type { WasmGraphData } from "../components/GraphLayout";
 
 function makeSmallGraph(): WasmGraphData {
   return {

@@ -4,7 +4,6 @@ import {
   createGameWithConfig,
   makeMove,
   getState,
-  getGraph,
   exportGraph,
   importGraph,
   type GameState,
@@ -134,9 +133,6 @@ export class GameAppElement extends HTMLElement {
   };
   private lastMove: { moved: boolean; scoreGained: number } | null = null;
   private activeTab: "play" | "graph" = "play";
-  private visualizationGraph:
-    | import("../utils/wasmBridge").WasmGraphData
-    | null = null;
   private visualizationGames: GameInstance[] = [];
   private visualizationActiveGameId: string | null = null;
   private resumeGames: GameInstance[] = [];
@@ -287,11 +283,10 @@ export class GameAppElement extends HTMLElement {
     try {
       terminal.log("awaiting getGraph + exportGraph...");
       const t1 = performance.now();
-      const [graph, snapshot] = await Promise.all([getGraph(), exportGraph()]);
+      const [snapshot] = await Promise.all([exportGraph()]);
       terminal.log(
         `WASM done (${(performance.now() - t1).toFixed(1)}ms) — nodes=${Object.keys(graph.nodes).length}, edges=${Object.keys(graph.edges).length}`,
       );
-      this.visualizationGraph = graph;
       this.visualizationGames = Object.values(snapshot.games);
       this.visualizationActiveGameId = this.state?.game.id ?? null;
       terminal.log("calling linkGraphTab...");
@@ -505,7 +500,6 @@ export class GameAppElement extends HTMLElement {
   private linkGraphTab() {
     const el = this.shadowRoot!.querySelector<GraphTabElement>("graph-tab");
     if (!el) return;
-    el.graphData = this.visualizationGraph;
     el.games = this.visualizationGames;
     el.activeGameId = this.visualizationActiveGameId ?? undefined;
   }

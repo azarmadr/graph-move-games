@@ -23,19 +23,20 @@ export interface WasmGraphData {
 export class GraphLayout {
   private _nodes: Map<string, LayoutNode> = new Map();
   private _edges: Map<string, LayoutEdge> = new Map();
-  private _layoutMode: LayoutMode = "dagre";
+  private _mode: LayoutMode = "dagre";
 
   get nodeCount(): number {
     return this._nodes.size;
   }
 
   get layoutMode(): LayoutMode {
-    return this._layoutMode;
+    return this._mode;
   }
 
   update(wasmData: WasmGraphData): boolean {
     const prevSize = this._nodes.size;
 
+    console.log({ wasmData });
     this._nodes.clear();
     for (const [key, node] of Object.entries(wasmData.nodes)) {
       this._nodes.set(key, { board: node.board, x: node.x, y: node.y });
@@ -46,26 +47,23 @@ export class GraphLayout {
       this._edges.set(key, { from: edge.from, to: edge.to, kind: edge.kind });
     }
 
-    if (this._layoutMode === "dagre") {
+    if (this._mode === "dagre") {
       this.clearPositions();
       this.computeDagLayout();
-    } else if (this._layoutMode === "visgraph") {
-      this.applyPositions();
     }
 
     return this._nodes.size !== prevSize || this._nodes.size > 0;
   }
 
   setLayoutMode(mode: LayoutMode): void {
-    this._layoutMode = mode;
+    this._mode = mode;
+    console.error();
 
     if (mode === "fg-dag") {
       this.clearPositions();
     } else if (mode === "dagre") {
       this.clearPositions();
       this.computeDagLayout();
-    } else if (mode === "visgraph") {
-      this.applyPositions();
     }
   }
 
@@ -80,7 +78,7 @@ export class GraphLayout {
         x: node.x ?? 0,
         y: node.y ?? 0,
       };
-      if (this._layoutMode !== "fg-dag" && node.x !== undefined) {
+      if (this._mode !== "fg-dag" && node.x !== undefined) {
         fgNode.fx = node.x;
         fgNode.fy = node.y;
       } else {
@@ -90,6 +88,7 @@ export class GraphLayout {
       nodes.push(fgNode);
     }
 
+    console.trace({ nodes, mode: this._mode });
     const links: ForceGraphLink[] = [];
     for (const [key, edge] of this._edges) {
       links.push({
@@ -102,12 +101,6 @@ export class GraphLayout {
     }
 
     return { nodes, links };
-  }
-
-  private computeLayout(): void {
-    if (this._layoutMode === "dagre") {
-      this.computeDagLayout();
-    }
   }
 
   private computeDagLayout(): void {
@@ -142,15 +135,6 @@ export class GraphLayout {
           node.x = pos.x;
           node.y = pos.y;
         }
-      }
-    }
-  }
-
-  private applyPositions(): void {
-    for (const [, node] of this._nodes) {
-      if (node.x !== undefined && node.y !== undefined) {
-        node.x = node.x;
-        node.y = node.y;
       }
     }
   }

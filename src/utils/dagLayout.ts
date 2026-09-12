@@ -21,6 +21,7 @@ export function edgeKey(edgeId: string) {
 }
 
 export function makeDagLayout(graphData: GraphData): DagLayout {
+  return;
   const layout = new dagre.graphlib.Graph({
     directed: true,
     multigraph: true,

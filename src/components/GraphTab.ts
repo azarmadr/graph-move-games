@@ -1,21 +1,21 @@
 import ForceGraph from "force-graph";
-import type { Board, Edge } from "../utils/wasmBridge";
+import type { GameInstance, Board, Edge } from "../utils/wasmBridge";
 import type { WasmGraphData } from "./GraphLayout";
 import { GraphLayout } from "./GraphLayout";
 import type { ForceGraphNode, ForceGraphLink } from "../utils/forceGraphTypes";
-import { GraphControlsElement } from "./GraphControls";
+import { type GraphControlsElement } from "./GraphControls";
 import { TILE_COLORS, FALLBACK_TILE_COLOR, COLORS } from "../utils/theme";
 import { emitEvent } from "../utils/events";
 import { terminal } from "../utils/terminal";
-import { NODE_SIZE, nodeKey, edgeKey } from "../utils/dagLayout";
+import { NODE_SIZE } from "../utils/dagLayout";
 import { buildNavMarkers } from "../utils/navMarkers";
+import { getGraph } from "../utils/wasmBridge";
 import {
   drawBoard,
   drawBoardBackground,
   drawSelectionHighlight,
 } from "../utils/canvasBoard";
 import type { LayoutMode } from "../utils/layoutMode";
-import type { GameInstance } from "../utils/wasmBridge";
 
 const DOT_THRESHOLD = 0.5;
 const DOT_RADIUS = 12;
@@ -207,10 +207,11 @@ function edgeColor(edge: Edge): string {
 }
 
 class ThumbnailCache {
-  private cache = new Map<string, ImageBitmap>();
+  private _cache = new Map<string, ImageBitmap>();
+  private _pending = new Map<string, ImageBitmap>();
 
   get(boardId: string, board: Board): ImageBitmap | undefined {
-    return this.cache.get(boardId);
+    return this._cache.get(boardId);
   }
 
   render(boardId: string, board: Board): ImageBitmap | null {
@@ -263,7 +264,7 @@ class ThumbnailCache {
   }
 
   clear() {
-    this.cache.clear();
+    this._cache.clear();
   }
 }
 
@@ -274,7 +275,6 @@ export class GraphTabElement extends HTMLElement {
   private _loadingState: "skeleton" | "loading" | "ready" | "error" =
     "skeleton";
   private _graphLayout = new GraphLayout();
-  private _layoutMode: LayoutMode = "dagre";
   private _layoutScheduled = false;
   private selectedId: string | null = null;
   private hoveredId: string | null = null;
@@ -290,13 +290,7 @@ export class GraphTabElement extends HTMLElement {
   private _thumbnailCache = new ThumbnailCache();
   private _graphControls: GraphControlsElement | null = null;
 
-  private _logLines: string[] = [];
-  private _boundKeyHandler: ((e: KeyboardEvent) => void) | null = null;
-
-  private dlog(msg: string) {
-    const t = performance.now().toFixed(0);
-    this._logLines.push(`${t}ms ${msg}`);
-  }
+  // private _boundKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
   set graphData(value: WasmGraphData | null) {
     if (value === this._graphData) return;
@@ -319,17 +313,16 @@ export class GraphTabElement extends HTMLElement {
   }
 
   set layoutMode(mode: LayoutMode) {
-    if (mode === this._layoutMode) return;
-    this._layoutMode = mode;
+    this._graphLayout.setLayoutMode(mode);
+    console.error();
     if (this._graphData) {
-      this._graphLayout.setLayoutMode(mode);
       this.scheduleLayout();
     }
     emitEvent(this, "layout-mode-changed", { mode });
   }
 
   get layoutMode(): LayoutMode {
-    return this._layoutMode;
+    return this._graphLayout.layoutMode;
   }
 
   set games(value: GameInstance[]) {
@@ -362,16 +355,16 @@ export class GraphTabElement extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this.shadowRoot!.adoptedStyleSheets = [sheet];
     this.render();
-    this._boundKeyHandler = this.handleKeydown.bind(this);
-    document.addEventListener("keydown", this._boundKeyHandler);
+    // this._boundKeyHandler = this.handleKeydown.bind(this);
+    // document.addEventListener("keydown", this._boundKeyHandler);
   }
 
   disconnectedCallback() {
     this.removeHoverCard();
-    if (this._boundKeyHandler) {
-      document.removeEventListener("keydown", this._boundKeyHandler);
-      this._boundKeyHandler = null;
-    }
+    // if (this._boundKeyHandler) {
+    //   document.removeEventListener("keydown", this._boundKeyHandler);
+    //   this._boundKeyHandler = null;
+    // }
     if (this._forceGraph) {
       this._forceGraph._destructor();
       this._forceGraph = null;
@@ -396,13 +389,13 @@ export class GraphTabElement extends HTMLElement {
     );
   }
 
-  private handleKeydown(e: KeyboardEvent) {
-    if (e.key === "l" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-      const modes: LayoutMode[] = ["dagre", "fg-dag", "visgraph"];
-      const idx = modes.indexOf(this._layoutMode);
-      this.layoutMode = modes[(idx + 1) % modes.length];
-    }
-  }
+  // private handleKeydown(e: KeyboardEvent) {
+  //   if (e.key === "l" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+  //     const modes: LayoutMode[] = ["dagre", "fg-dag", "visgraph"];
+  //     const idx = modes.indexOf(this.layoutMode);
+  //     this.layoutMode = modes[(idx + 1) % modes.length];
+  //   }
+  // }
 
   togglePhysics() {
     if (!this._forceGraph || !this._graphData) return;
@@ -460,11 +453,11 @@ export class GraphTabElement extends HTMLElement {
         const edgeCount = Object.keys(this._graphData.edges).length;
 
         terminal.log(
-          `layout-performance: mode=${this._layoutMode} layout=${layoutTime.toFixed(1)}ms render=${renderTime.toFixed(1)}ms nodes=${nodeCount} edges=${edgeCount}`,
+          `layout-performance: mode=${this.layoutMode} layout=${layoutTime.toFixed(1)}ms render=${renderTime.toFixed(1)}ms nodes=${nodeCount} edges=${edgeCount}`,
         );
 
         emitEvent(this, "layout-performance", {
-          layoutMode: this._layoutMode,
+          layoutMode: this.layoutMode,
           layoutTime,
           renderTime,
           nodeCount,
@@ -482,11 +475,11 @@ export class GraphTabElement extends HTMLElement {
     const { nodes, links } = this._graphLayout.toForceGraphData();
 
     this._edgeWaypoints.clear();
-    this._nodePositionMap.clear();
+    // this._nodePositionMap.clear();
 
     for (const node of nodes) {
       if (node.x || node.y) {
-        this._nodePositionMap.set(node.id, { x: node.x, y: node.y });
+        // this._nodePositionMap.set(node.id, { x: node.x, y: node.y });
       }
     }
 
@@ -497,7 +490,7 @@ export class GraphTabElement extends HTMLElement {
 
     this._forceGraph.graphData({ nodes, links } as any);
 
-    if (this._layoutMode === "fg-dag") {
+    if (this.layoutMode === "fg-dag") {
       this._forceGraph.dagMode("td").dagLevelDistance(NODE_SIZE + 92);
     } else {
       this._forceGraph.dagMode(null as any);
@@ -511,6 +504,7 @@ export class GraphTabElement extends HTMLElement {
 
   private initForceGraph(nodes: ForceGraphNode[], links: ForceGraphLink[]) {
     terminal.log("initForceGraph START");
+    const t0 = performance.now();
 
     if (this._forceGraph) {
       this._forceGraph._destructor();
@@ -531,7 +525,7 @@ export class GraphTabElement extends HTMLElement {
     this._graphControls = document.createElement(
       "graph-controls",
     ) as GraphControlsElement;
-    this._graphControls.layoutMode = this._layoutMode;
+    this._graphControls.layoutMode = this.layoutMode;
     this.shadowRoot!.appendChild(this._graphControls);
 
     this._graphControls.addEventListener("navigate-node", ((e: CustomEvent) => {
@@ -573,10 +567,10 @@ export class GraphTabElement extends HTMLElement {
       .onZoom(this.handleZoom.bind(this))
       .enableNodeDrag(false)
       .enablePointerInteraction(true)
-      .minZoom(0.2)
+      .minZoom(0.02)
       .maxZoom(3);
 
-    if (this._layoutMode === "fg-dag") {
+    if (this.layoutMode === "fg-dag") {
       fg.dagMode("td").dagLevelDistance(NODE_SIZE + 92);
     } else {
       fg.d3Force("charge", null).d3Force("link", null).d3Force("center", null);

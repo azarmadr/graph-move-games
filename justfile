@@ -23,7 +23,7 @@ build-wasm:
 
 # Run the Rust unit tests
 test-rust:
-    cargo test -p game-core
+    cargo test -- --show-output
 
 # Run the JavaScript/TypeScript tests
 test:
