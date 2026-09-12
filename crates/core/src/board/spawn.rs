@@ -1,5 +1,5 @@
 use {
-    crate::types::{Board, Cell, SpawnConfig},
+    crate::{Board, Cell, SpawnConfig},
     rand::RngExt,
 };
 
@@ -18,7 +18,7 @@ impl Board {
         let pos = random_item(&empties)?;
         let tile = weighted_tile(config)?;
 
-        Ok(vec![Cell::new(pos.r, pos.c, tile)])
+        Ok(vec![Cell::new(pos.0 as u8, pos.1 as u8, tile)])
     }
     pub(crate) fn spawn(&mut self, config: &SpawnConfig) -> Result<Vec<Cell>, String> {
         let spawn_cells = self.sample_spawn(config)?;
@@ -68,7 +68,7 @@ fn weighted_tile(config: &SpawnConfig) -> Result<u32, String> {
 mod tests {
     use {
         super::*,
-        crate::types::Pos,
+        crate::Pos,
         std::collections::{HashMap, HashSet},
     };
 
@@ -81,15 +81,19 @@ mod tests {
         };
 
         let result = board.spawn(&config).unwrap();
-        println!("{board:?}");
+        println!("{board:?} {result:?}");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].tile, 2);
-        assert!(!board.empty_positions().contains(&result[0].pos));
+        assert!(
+            !board
+                .empty_positions()
+                .contains(&(result[0].pos.r.into(), result[0].pos.c.into()))
+        );
     }
 
     #[test]
     fn samples_one_configured_tile_in_an_empty_cell() {
-        let board = Board::with_tiles(3, 3, vec![Cell::new(1, 1, 8)]);
+        let board = Board::with_dim(3, 3).tiles(vec![Cell::new(1, 1, 8)]);
         let config = SpawnConfig {
             spawns: HashMap::from([(2, 9), (4, 1)]),
         };
@@ -97,14 +101,18 @@ mod tests {
         for _ in 0..64 {
             let result = board.sample_spawn(&config).unwrap();
             assert_eq!(result.len(), 1);
-            assert!(board.empty_positions().contains(&result[0].pos));
+            assert!(
+                board
+                    .empty_positions()
+                    .contains(&(result[0].pos.r.into(), result[0].pos.c.into()))
+            );
             assert!(matches!(result[0].tile, 2 | 4));
         }
     }
 
     #[test]
     fn randomizes_empty_cell_selection() {
-        let board = Board::with_tiles(3, 3, vec![Cell::new(1, 1, 8)]);
+        let board = Board::with_dim(3, 3).tiles(vec![Cell::new(1, 1, 8)]);
         let config = SpawnConfig {
             spawns: HashMap::from([(2, 1)]),
         };
@@ -117,7 +125,7 @@ mod tests {
 
     #[test]
     fn randomizes_weighted_tile_selection() {
-        let board = Board::with_tiles(1, 2, vec![Cell::new(0, 0, 8)]);
+        let board = Board::with_dim(1, 2).tiles(vec![Cell::new(0, 0, 8)]);
         let config = SpawnConfig {
             spawns: HashMap::from([(2, 9), (4, 1)]),
         };
@@ -130,7 +138,7 @@ mod tests {
 
     #[test]
     fn rejects_config_without_positive_weights() {
-        let board = Board::with_tiles(1, 2, vec![Cell::new(0, 0, 8)]);
+        let board = Board::with_dim(1, 2).tiles(vec![Cell::new(0, 0, 8)]);
         let config = SpawnConfig {
             spawns: HashMap::from([(2, 0), (4, 0)]),
         };
@@ -141,7 +149,7 @@ mod tests {
 
     #[test]
     fn returns_no_spawn_when_board_is_full() {
-        let board = Board::with_tiles(1, 1, vec![Cell::new(0, 0, 8)]);
+        let board = Board::with_dim(1, 1).tiles(vec![Cell::new(0, 0, 8)]);
         let config = SpawnConfig {
             spawns: HashMap::from([(2, 1)]),
         };
