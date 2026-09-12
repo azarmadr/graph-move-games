@@ -1,3 +1,6 @@
 [workspace]
 members = ["crates/core", "crates/wasm", "crates/tui", "crates/merge-cli"]
 resolver = "2"
+
+[profile.release.package.game-wasm]
+opt-level = "s"
