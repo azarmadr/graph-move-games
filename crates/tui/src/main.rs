@@ -162,14 +162,14 @@ fn ui(f: &mut Frame, app: &App) {
 }
 
 fn render_board(board: &Board) -> Vec<Line<'static>> {
-    let (rows, cols) = board.dim;
+    let (rows, cols) = board.size();
     let mut lines = Vec::new();
 
     for r in 0..rows {
         let mut spans = Vec::new();
         for c in 0..cols {
-            let val = board.tile_at(r, c).unwrap_or(0);
-            let (text, color) = tile_display(val);
+            let val = board.tile_at(r as u8, c as u8).unwrap_or(&0);
+            let (text, color) = tile_display(*val);
             spans.push(Span::styled(
                 format!(" {text:^5} "),
                 Style::default().fg(color),
@@ -183,7 +183,7 @@ fn render_board(board: &Board) -> Vec<Line<'static>> {
             lines.push(Line::from(Span::raw(
                 "───────┼───────┼───────"
                     .chars()
-                    .take((cols as usize * 8 - 1).min(23))
+                    .take((cols * 8 - 1).min(23))
                     .collect::<String>(),
             )));
         }

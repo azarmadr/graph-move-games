@@ -10,5 +10,6 @@ serde_json = "1.0"
 rand = { version = "0.10.2" }
 getrandom = { version = "0.4", features = ["wasm_js"] }
 petgraph = { version = "0.8", features = ["serde-1"] }
+grid = "1.0.1"
 
 [dev-dependencies]

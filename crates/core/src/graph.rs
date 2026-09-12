@@ -1,5 +1,5 @@
 use {
-    crate::types::*,
+    crate::{Board, types::*},
     petgraph::{
         graph::{DiGraph, EdgeIndex, NodeIndex},
         visit::EdgeRef,
