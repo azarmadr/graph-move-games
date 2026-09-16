@@ -128,4 +128,25 @@ describe("GraphTabElement — pressing graph tab", () => {
     el.graphData = smallGraph;
     expect(() => el.remove()).not.toThrow();
   });
+
+  it("shows error state when layout fails and retry button is present", () => {
+    vi.useFakeTimers();
+    try {
+      el.graphData = smallGraph;
+      vi.advanceTimersByTime(50);
+      expect(el.loadingState).toBe("ready");
+
+      (el as any)._loadingState = "error";
+      (el as any).render();
+
+      expect(el.shadowRoot!.innerHTML).toContain("Failed to load graph data");
+      expect(el.shadowRoot!.innerHTML).toContain("error-retry");
+
+      const retryBtn =
+        el.shadowRoot!.querySelector<HTMLButtonElement>(".error-retry");
+      expect(retryBtn).not.toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
