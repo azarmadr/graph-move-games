@@ -1,11 +1,12 @@
 /**
- * Thin wrapper around `vite-plugin-terminal`.
+ * Pluggable logging adapter.
  *
- * Dev / preview: re-exports the real `virtual:terminal` module provided by
- * the Vite plugin so that logs appear in the in-browser terminal overlay.
+ * Dev: re-exports `vite-plugin-terminal` which sends logs to the Node
+ * terminal. Run the dev server with output teed to a file:
  *
- * Tests / SSR: vitest aliases this file to `src/__mocks__/virtual-terminal.ts`
- * which provides a silent no-op.
+ *   pnpm dev 2>&1 | tee .data/dev.log
+ *
+ * Tests: vitest aliases this file to __mocks__/virtual-terminal.ts (no-op).
  */
 // @ts-expect-error — provided by vite-plugin-terminal at dev/build time
 export { terminal } from "virtual:terminal";

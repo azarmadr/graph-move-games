@@ -921,6 +921,17 @@ export class GraphTabElement extends HTMLElement {
           <button class="error-retry" type="button">Retry</button>
         </div>
       `;
+      const retryBtn =
+        this.shadowRoot!.querySelector<HTMLButtonElement>(".error-retry");
+      if (retryBtn) {
+        retryBtn.addEventListener("click", () => {
+          if (this._graphData) {
+            this._loadingState = "loading";
+            this.render();
+            this.scheduleLayout();
+          }
+        });
+      }
       return;
     }
 
