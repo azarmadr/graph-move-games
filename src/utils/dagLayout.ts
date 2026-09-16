@@ -1,5 +1,5 @@
 import dagre from "@dagrejs/dagre";
-import type { GraphData, Edge, Board } from "./wasmBridge";
+import type { GraphData, Edge } from "./wasmBridge";
 
 export type Point = { x: number; y: number };
 
