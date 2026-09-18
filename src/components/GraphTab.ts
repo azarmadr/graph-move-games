@@ -14,6 +14,7 @@ import {
   makeDagLayout,
 } from "../utils/dagLayout";
 import { buildNavMarkers } from "../utils/navMarkers";
+import { notify } from "../utils/notify";
 import {
   drawBoard,
   drawBoardBackground,
@@ -23,6 +24,7 @@ import {
 const DOT_THRESHOLD = 0.5;
 const DOT_RADIUS = 12;
 const THRESHOLD_BAND = 0.15;
+const DAG_THRESHOLD = 800;
 
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(/* css */ `
@@ -278,6 +280,7 @@ export class GraphTabElement extends HTMLElement {
     "skeleton";
   private _pendingLayout: DagLayout | null = null;
   private _layoutScheduled = false;
+  private _dagMode = false;
   private selectedId: string | null = null;
   private hoveredId: string | null = null;
 
@@ -359,7 +362,15 @@ export class GraphTabElement extends HTMLElement {
   }
 
   centerOnNode(nodeId: string) {
-    if (!this._forceGraph || !this._pendingLayout) return;
+    if (!this._forceGraph) return;
+    if (this._dagMode) {
+      const node = this._forceGraph
+        .graphData()
+        .nodes.find((n) => n.id === nodeId);
+      if (node) this._forceGraph.centerAt(node.x, node.y, 400);
+      return;
+    }
+    if (!this._pendingLayout) return;
     const position = this._pendingLayout.nodes[nodeId];
     if (!position) return;
     this._forceGraph.centerAt(position.x, position.y, 400);
@@ -418,6 +429,22 @@ export class GraphTabElement extends HTMLElement {
       this._layoutScheduled = false;
       if (!this._graphData) return;
 
+      const nodeCount = Object.keys(this._graphData.nodes).length;
+
+      if (nodeCount > DAG_THRESHOLD) {
+        terminal.log(`Graph too large (${nodeCount} nodes) — using dag mode`);
+        this._dagMode = true;
+        this._pendingLayout = null;
+        this._loadingState = "ready";
+        notify(
+          `Graph too large for static layout (${nodeCount} nodes). Using force-directed dag mode.`,
+          5000,
+        );
+        this.initForceGraph();
+        return;
+      }
+
+      this._dagMode = false;
       try {
         terminal.log("makeDagLayout START...");
         const t0 = performance.now();
@@ -443,7 +470,7 @@ export class GraphTabElement extends HTMLElement {
     this.dlog("initForceGraph START");
     const layout = this._pendingLayout;
     const graphData = this._graphData;
-    if (!layout || !graphData) return;
+    if (!graphData) return;
 
     if (this._forceGraph) {
       this._forceGraph._destructor();
@@ -489,7 +516,7 @@ export class GraphTabElement extends HTMLElement {
     terminal.log("  building nodes array...");
     const t1 = performance.now();
     const nodes = Object.keys(graphData.nodes).map((board_id) => {
-      const pos = layout.nodes[nodeKey(board_id)];
+      const pos = layout?.nodes[nodeKey(board_id)];
       const nodeData = graphData.nodes[board_id];
       if (pos) this._nodePositionMap.set(nodeKey(board_id), pos);
       return {
@@ -506,7 +533,7 @@ export class GraphTabElement extends HTMLElement {
       const edge = graphData.edges[edge_id];
       const sourceKey = nodeKey(edge.from);
       const targetKey = nodeKey(edge.to);
-      const pts = layout.edges.find((e) => e.edge_id === edge_id)?.points ?? [];
+      const pts = layout?.edges.find((e) => e.edge_id === edge_id)?.points ?? [];
       this._edgeWaypoints.set(edgeKey(edge_id), pts);
       links.push({
         id: edgeKey(edge_id),
@@ -516,9 +543,7 @@ export class GraphTabElement extends HTMLElement {
         target: targetKey,
       });
     }
-    terminal.log(
-      `  nodes=${nodes.length}, links=${links.length} (${(performance.now() - t1).toFixed(1)}ms)`,
-    );
+    terminal.log(`  nodes=${nodes.length}, links=${links.length} (${(performance.now() - t1).toFixed(1)}ms)`);
 
     terminal.log("  creating ForceGraph instance...");
     const t2 = performance.now();
@@ -545,18 +570,23 @@ export class GraphTabElement extends HTMLElement {
       .enableNodeDrag(false)
       .enablePointerInteraction(true)
       .minZoom(0.2)
-      .maxZoom(3)
-      .d3Force("charge", null)
-      .d3Force("link", null)
-      .d3Force("center", null);
-    terminal.log(
-      `  ForceGraph config done (${(performance.now() - t2).toFixed(1)}ms)`,
-    );
+      .maxZoom(3);
+
+    if (this._dagMode) {
+      fg.dagMode("td").dagLevelDistance(NODE_SIZE + 92);
+    } else {
+      fg.d3Force("charge", null)
+        .d3Force("link", null)
+        .d3Force("center", null);
+    }
+    terminal.log(`  ForceGraph config done (${(performance.now() - t2).toFixed(1)}ms)`);
     this.dlog("config chain done");
 
-    for (const node of fg.graphData().nodes) {
-      node.fx = node.x;
-      node.fy = node.y;
+    if (!this._dagMode) {
+      for (const node of fg.graphData().nodes) {
+        node.fx = node.x;
+        node.fy = node.y;
+      }
     }
     this.dlog("fx/fy set — scheduling zoomToFit");
 
@@ -571,9 +601,7 @@ export class GraphTabElement extends HTMLElement {
     });
 
     this.updateInspector();
-    terminal.log(
-      `initForceGraph COMPLETE (${(performance.now() - t0).toFixed(1)}ms total)`,
-    );
+    terminal.log(`initForceGraph COMPLETE (${(performance.now() - t0).toFixed(1)}ms total)`);
 
     requestAnimationFrame(() => {
       const t3 = performance.now();
@@ -582,9 +610,7 @@ export class GraphTabElement extends HTMLElement {
         this._games,
         this._activeGameId,
       );
-      terminal.log(
-        `buildNavMarkers deferred (${(performance.now() - t3).toFixed(1)}ms)`,
-      );
+      terminal.log(`buildNavMarkers deferred (${(performance.now() - t3).toFixed(1)}ms)`);
     });
   }
 

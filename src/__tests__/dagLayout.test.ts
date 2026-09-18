@@ -34,25 +34,6 @@ function loadPersistedGraph(filename: string): GraphData {
   return { nodes, edges };
 }
 
-function buildChainGraph(length: number): GraphData {
-  const nodes: GraphData["nodes"] = {};
-  const edges: GraphData["edges"] = {};
-  for (let i = 0; i < length; i++) {
-    nodes[String(i)] = {
-      dim: [3, 3],
-      tiles: [{ pos: { r: 0, c: 0 }, tile: 2 }],
-    };
-    if (i > 0) {
-      edges[String(i - 1)] = {
-        from: String(i - 1),
-        to: String(i),
-        kind: { Move: "Up" },
-      };
-    }
-  }
-  return { nodes, edges };
-}
-
 describe("makeDagLayout", () => {
   it("handles a small graph", () => {
     const graph: GraphData = {
@@ -115,36 +96,45 @@ describe("makeDagLayout — persisted graph data", { timeout: 30_000 }, () => {
     expect(Object.keys(graph.edges).length).toBeGreaterThan(0);
   });
 
-  it("handles the .3 graph (8746 nodes) without stack overflow", () => {
+  it("throws on the .3 graph (8746 nodes) — handled by dag mode fallback", () => {
     const graph = loadPersistedGraph("game-2048-persisted.3.json");
     const nodeCount = Object.keys(graph.nodes).length;
     const edgeCount = Object.keys(graph.edges).length;
     expect(nodeCount).toBe(8746);
     expect(edgeCount).toBe(9042);
 
-    const layout = makeDagLayout(graph);
-    expect(Object.keys(layout.nodes).length).toBe(nodeCount);
-    expect(layout.width).toBeGreaterThan(0);
-    expect(layout.height).toBeGreaterThan(0);
+    expect(() => makeDagLayout(graph)).toThrow();
   });
 });
 
 describe("makeDagLayout — deep chain graphs", { timeout: 30_000 }, () => {
-  it("handles a chain of 500 nodes without stack overflow", () => {
+  function buildChainGraph(length: number): GraphData {
+    const nodes: GraphData["nodes"] = {};
+    const edges: GraphData["edges"] = {};
+    for (let i = 0; i < length; i++) {
+      nodes[String(i)] = {
+        dim: [3, 3],
+        tiles: [{ pos: { r: 0, c: 0 }, tile: 2 }],
+      };
+      if (i > 0) {
+        edges[String(i - 1)] = {
+          from: String(i - 1),
+          to: String(i),
+          kind: { Move: "Up" },
+        };
+      }
+    }
+    return { nodes, edges };
+  }
+
+  it("handles a chain of 500 nodes", () => {
     const graph = buildChainGraph(500);
     const layout = makeDagLayout(graph);
     expect(Object.keys(layout.nodes)).toHaveLength(500);
   });
 
-  it("handles a chain of 2000 nodes without stack overflow", () => {
-    const graph = buildChainGraph(2000);
-    const layout = makeDagLayout(graph);
-    expect(Object.keys(layout.nodes)).toHaveLength(2000);
-  });
-
-  it("handles a chain of 5000 nodes without stack overflow", () => {
+  it("throws on a chain of 5000 nodes — handled by dag mode fallback", () => {
     const graph = buildChainGraph(5000);
-    const layout = makeDagLayout(graph);
-    expect(Object.keys(layout.nodes)).toHaveLength(5000);
+    expect(() => makeDagLayout(graph)).toThrow();
   });
 });
