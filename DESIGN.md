@@ -1,6 +1,6 @@
 # Design Document: 2048 + DAG Graph Visualizer
 
-**Status:** Phase 2 – Data Model Complete, WASM Bridge Live, Graph Rendering in Progress
+**Status:** Graph layout moved to Rust/WASM (visgraph), collapsible controls, layout mode switching
 
 ## Product Summary
 
@@ -118,59 +118,68 @@ interface SpawnConfig {
 
 ## Architecture
 
-### Layout
-
-Two canvases side-by-side (or stacked on mobile):
+### Graph Visualization Architecture
 
 ```
-┌─────────────────────────────────────────────┐
-│  2048 + DAG Graph Visualizer               │
-│  Rust/WASM · Phase 2 — real data model...  │
-├─────────────────────────────────────────────┤
-│  Board size: [3×3] [4×4] [5×5]             │
-├──────────────────────┬──────────────────────┤
-│                      │                      │
-│   Board Canvas       │   Graph Canvas       │
-│   360×360            │   440×360            │
-│   - 4×4 2048 board   │   - Neighborhood:    │
-│   - SCORE display    │     preds, current,  │
-│   - Tile rendering   │     successors       │
-│   - Touch/keyboard   │   - Mini boards      │
-│     controls         │   - Edge labels      │
-│                      │   - Node glow        │
-├──────────────────────┴──────────────────────┤
-│  Phase 2 Status: [checklist of impl]       │
-└─────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│  GraphTabElement (custom element)                           │
+│  ┌──────────────────────────────────┬────────────────────┐  │
+│  │  Canvas Host (flex: 1)           │  Controls Sidebar  │  │
+│  │  ┌────────────────────────────┐  │  (flex: 0 0 auto)  │  │
+│  │  │  ForceGraph instance       │  │  ┌──────────────┐  │  │
+│  │  │  - Custom node rendering   │  │  │ Layout:       │  │  │
+│  │  │  - Custom link rendering   │  │  │ [Dagre|FD|VG] │  │  │
+│  │  │  - Zoom/pan                │  │  ├──────────────┤  │  │
+│  │  └────────────────────────────┘  │  │ Navigate      │  │  │
+│  │  Inspector (bottom-right)        │  │ Zoom          │  │  │
+│  └──────────────────────────────────┤  │ Hops          │  │  │
+│                                     │  │ Physics       │  │  │
+│  GraphLayout class                  │  │ Legend         │  │  │
+│  - _nodes: Map<string, Node>        │  └──────────────┘  │  │
+│  - _edges: Map<string, Edge>        └────────────────────┘  │
+│  - _layoutMode: LayoutMode                                  │
+│  - update(wasmData) → merge + compute                      │
+│  - setLayoutMode(mode) → switch + recompute                 │
+│  - toForceGraphData() → FgNode[] + FgLink[]                 │
+└─────────────────────────────────────────────────────────────┘
+         │
+         │ WasmGraphData (nodes with optional x/y)
+         ▼
+┌─────────────────────────────────────────────────────────────┐
+│  game-wasm (Rust/WASM)                                     │
+│  get_graph(prune_edges, layout_mode) → JSON                 │
+│  ┌──────────────────────────────────────────────────────┐   │
+│  │  GraphLayout { nodes: {board, x?, y?}, edges }       │   │
+│  │  - build_graph_layout() from Engine                   │   │
+│  │  - prune_reverse_edges() (optional)                   │   │
+│  │  - apply_visgraph_layout() (if mode="visgraph")       │   │
+│  └──────────────────────────────────────────────────────┘   │
+│  Dependencies: game-core, visgraph 0.1, petgraph 0.8        │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Components
+### Layout Modes
 
-**App.tsx** — Main React container, state management
-- Loads WASM on mount
-- Creates initial game with config
-- Renders two canvas refs
-- Handles keyboard + touch input
+| Mode | Layout Engine | Positions | When to Use |
+|------|--------------|-----------|-------------|
+| `dagre` | JS dagre.js | Computed client-side | Small graphs (<800 nodes) |
+| `fg-dag` | force-graph dag mode | None (physics-based) | Mid-size, interactive |
+| `visgraph` | Rust/WASM visgraph | Computed in WASM | Large graphs (>800 nodes) |
 
-**drawBoard()** — Board canvas rendering
-- Sparse tile layout via `Cell` array
-- Rounded rectangles, 2048-standard colors
-- Dynamic font sizing (28px → 20px by tile value)
-- Mobile-safe touch start/move/end handlers
+### Data Flow
 
-**drawFocusedGraph()** — Graph canvas rendering
-- Fixed positions: predecessor row (top), current center, successor row (bottom)
-- Edge color-coding: cyan (spawn from pred), pink (move to succ)
-- Mini boards (44×44) showing snapshots at each node
-- Edge labels: "up", "down", "left", "right", "spawn"
-- Glow effect on current node
-- Legend: game ID, node ID, score, status
-
-**wasmBridge.ts** — Typed JSON serialization layer
-- `loadWasm()` — imports `game_2048_wasm.js`, initializes
-- `createGameWithConfig(config)` → `GameState`
-- `makeMove(gameId, direction)` → `GameState`
-- `getGraph()` → `GraphData` (visualization tab only)
-- Full TypeScript types matching Rust struct shapes
+```
+WASM get_graph(prune, mode)
+  → WasmGraphData { nodes: {board, x?, y?}, edges }
+  → GraphLayout.update(wasmData)
+    → merges nodes + positions
+    → computes dagre if needed
+  → GraphLayout.toForceGraphData()
+    → FgNode[] (with fx/fy from x/y)
+    → FgLink[]
+  → ForceGraph.graphData({ nodes, links })
+    → incremental update (no destroy/recreate)
+```
 
 ### WASM Boundary
 
@@ -184,9 +193,11 @@ m.create_game_with_config(JSON.stringify({ rows: 4, cols: 4 }))
 m.make_move(game_id_str, "Up")
   → GameState (JSON string) → parsed by JS
 
-// Graph snapshot — only needed by the visualization tab
-m.get_graph()
-  → GraphData (JSON string) → parsed by JS
+// Graph snapshot — with optional layout
+m.get_graph(prune_edges=false, layout_mode="visgraph")
+  → WasmGraphData (JSON string) → parsed by JS
+  // nodes: { [key]: { board, x?, y? } }
+  // edges: { [key]: { from, to, kind } }
 ```
 
 **Rationale for JSON:**
@@ -244,11 +255,12 @@ m.get_graph()
 
 ### Graph Rendering
 
-1. **Input:** `getGraph()` snapshot (`GraphData`: nodes + edges) + `game.current_board_id`
-2. **Layout:** dagre directed-graph layout over all nodes/edges (`graph-tab.ts`)
-3. **Draw edges:** Color-coded paths — cyan for `Move`, pink for `Spawn` — with arrow markers
-4. **Draw nodes:** Mini board thumbnails (sparse tile rendering); highlight current and source nodes
-5. **Inspector:** Click a node/edge to see its canonical board or transition metadata
+1. **Input:** `getGraph(prune, mode)` snapshot (`WasmGraphData`: nodes with optional x/y + edges)
+2. **GraphLayout.update():** merges board data + positions, computes dagre if needed
+3. **GraphLayout.toForceGraphData():** derives `FgNode[]` (fx/fy from x/y) and `FgLink[]`
+4. **ForceGraph.graphData():** incremental update (no destroy/recreate)
+5. **Custom rendering:** nodeCanvasObject (board thumbnails), linkCanvasObject (edges with arrows)
+6. **Inspector:** Click a node/edge to see its canonical board or transition metadata
 
 ---
 

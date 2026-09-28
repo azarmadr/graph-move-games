@@ -1,30 +1,25 @@
 import ForceGraph from "force-graph";
-import type { GraphData, Edge, GameInstance, Board } from "../utils/wasmBridge";
+import type { Board, Edge } from "../utils/wasmBridge";
+import type { WasmGraphData } from "./GraphLayout";
+import { GraphLayout } from "./GraphLayout";
 import type { ForceGraphNode, ForceGraphLink } from "../utils/forceGraphTypes";
 import { GraphControlsElement } from "./GraphControls";
 import { TILE_COLORS, FALLBACK_TILE_COLOR, COLORS } from "../utils/theme";
 import { emitEvent } from "../utils/events";
 import { terminal } from "../utils/terminal";
-import {
-  type DagLayout,
-  type Point,
-  NODE_SIZE,
-  nodeKey,
-  edgeKey,
-  makeDagLayout,
-} from "../utils/dagLayout";
+import { NODE_SIZE, nodeKey, edgeKey } from "../utils/dagLayout";
 import { buildNavMarkers } from "../utils/navMarkers";
-import { notify } from "../utils/notify";
 import {
   drawBoard,
   drawBoardBackground,
   drawSelectionHighlight,
 } from "../utils/canvasBoard";
+import type { LayoutMode } from "../utils/layoutMode";
+import type { GameInstance } from "../utils/wasmBridge";
 
 const DOT_THRESHOLD = 0.5;
 const DOT_RADIUS = 12;
 const THRESHOLD_BAND = 0.15;
-const DAG_THRESHOLD = 800;
 
 const sheet = new CSSStyleSheet();
 sheet.replaceSync(/* css */ `
@@ -198,23 +193,24 @@ function dominantTileColor(board: Board): string {
   for (const cell of board.tiles) {
     if (cell.tile > maxTile) maxTile = cell.tile;
   }
-  return (TILE_COLORS[maxTile] ?? { bg: "#cdc1b4" }).bg;
+  return TILE_COLORS[maxTile] ?? FALLBACK_TILE_COLOR;
 }
 
-function edgeColor(edge: Edge) {
-  return edge.kind.Move ? COLORS.selected : COLORS.current;
+function lerp(a: number, b: number, t: number) {
+  return a + (b - a) * t;
 }
 
-function lerp(a: number, b: number, t: number): number {
-  return a + (b - a) * Math.max(0, Math.min(1, t));
+function edgeColor(edge: Edge): string {
+  if (edge.kind.Move) return COLORS.selected;
+  if (edge.kind.Spawn) return COLORS.current;
+  return COLORS.default;
 }
 
 class ThumbnailCache {
-  private _cache = new Map<string, ImageBitmap>();
-  private _pending = new Map<string, Promise<ImageBitmap>>();
+  private cache = new Map<string, ImageBitmap>();
 
-  get(boardId: string, board: Board): ImageBitmap | null {
-    return this._cache.get(boardId) ?? null;
+  get(boardId: string, board: Board): ImageBitmap | undefined {
+    return this.cache.get(boardId);
   }
 
   render(boardId: string, board: Board): ImageBitmap | null {
@@ -267,20 +263,19 @@ class ThumbnailCache {
   }
 
   clear() {
-    this._cache.clear();
-    this._pending.clear();
+    this.cache.clear();
   }
 }
 
 export class GraphTabElement extends HTMLElement {
-  private _graphData: GraphData | null = null;
+  private _graphData: WasmGraphData | null = null;
   private _games: GameInstance[] = [];
   private _activeGameId: string | undefined;
   private _loadingState: "skeleton" | "loading" | "ready" | "error" =
     "skeleton";
-  private _pendingLayout: DagLayout | null = null;
+  private _graphLayout = new GraphLayout();
+  private _layoutMode: LayoutMode = "dagre";
   private _layoutScheduled = false;
-  private _dagMode = false;
   private selectedId: string | null = null;
   private hoveredId: string | null = null;
 
@@ -290,19 +285,20 @@ export class GraphTabElement extends HTMLElement {
   private _mouseY = 0;
   private _hoverCard: HTMLElement | null = null;
 
-  private _edgeWaypoints: Map<string, Point[]> = new Map();
+  private _edgeWaypoints: Map<string, { x: number; y: number }[]> = new Map();
   private _nodePositionMap: Map<string, { x: number; y: number }> = new Map();
   private _thumbnailCache = new ThumbnailCache();
   private _graphControls: GraphControlsElement | null = null;
 
   private _logLines: string[] = [];
+  private _boundKeyHandler: ((e: KeyboardEvent) => void) | null = null;
 
   private dlog(msg: string) {
     const t = performance.now().toFixed(0);
     this._logLines.push(`${t}ms ${msg}`);
   }
 
-  set graphData(value: GraphData | null) {
+  set graphData(value: WasmGraphData | null) {
     if (value === this._graphData) return;
     this._graphData = value;
     if (value) {
@@ -310,19 +306,30 @@ export class GraphTabElement extends HTMLElement {
       const edgeCount = Object.keys(value.edges).length;
       terminal.log(`graphData SET — ${nodeCount} nodes, ${edgeCount} edges`);
       this._loadingState = "loading";
-      this.dlog("graphData SET — calling render()");
       this.render();
-      this.dlog("render() done — calling scheduleLayout()");
       this.scheduleLayout();
-      this.dlog("scheduleLayout() done");
     } else {
       this._loadingState = "skeleton";
       this.render();
     }
   }
 
-  get graphData(): GraphData | null {
+  get graphData(): WasmGraphData | null {
     return this._graphData;
+  }
+
+  set layoutMode(mode: LayoutMode) {
+    if (mode === this._layoutMode) return;
+    this._layoutMode = mode;
+    if (this._graphData) {
+      this._graphLayout.setLayoutMode(mode);
+      this.scheduleLayout();
+    }
+    emitEvent(this, "layout-mode-changed", { mode });
+  }
+
+  get layoutMode(): LayoutMode {
+    return this._layoutMode;
   }
 
   set games(value: GameInstance[]) {
@@ -355,25 +362,28 @@ export class GraphTabElement extends HTMLElement {
     this.attachShadow({ mode: "open" });
     this.shadowRoot!.adoptedStyleSheets = [sheet];
     this.render();
+    this._boundKeyHandler = this.handleKeydown.bind(this);
+    document.addEventListener("keydown", this._boundKeyHandler);
   }
 
   disconnectedCallback() {
     this.removeHoverCard();
+    if (this._boundKeyHandler) {
+      document.removeEventListener("keydown", this._boundKeyHandler);
+      this._boundKeyHandler = null;
+    }
+    if (this._forceGraph) {
+      this._forceGraph._destructor();
+      this._forceGraph = null;
+    }
   }
 
   centerOnNode(nodeId: string) {
     if (!this._forceGraph) return;
-    if (this._dagMode) {
-      const node = this._forceGraph
-        .graphData()
-        .nodes.find((n) => n.id === nodeId);
-      if (node) this._forceGraph.centerAt(node.x, node.y, 400);
-      return;
-    }
-    if (!this._pendingLayout) return;
-    const position = this._pendingLayout.nodes[nodeId];
-    if (!position) return;
-    this._forceGraph.centerAt(position.x, position.y, 400);
+    const node = this._forceGraph
+      .graphData()
+      .nodes.find((n) => n.id === nodeId);
+    if (node) this._forceGraph.centerAt(node.x, node.y, 400);
   }
 
   zoomBy(direction: "in" | "out") {
@@ -386,14 +396,22 @@ export class GraphTabElement extends HTMLElement {
     );
   }
 
+  private handleKeydown(e: KeyboardEvent) {
+    if (e.key === "l" && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      const modes: LayoutMode[] = ["dagre", "fg-dag", "visgraph"];
+      const idx = modes.indexOf(this._layoutMode);
+      this.layoutMode = modes[(idx + 1) % modes.length];
+    }
+  }
+
   togglePhysics() {
     if (!this._forceGraph || !this._graphData) return;
     this._physicsEnabled = !this._physicsEnabled;
 
     if (this._physicsEnabled) {
       for (const node of this._forceGraph.graphData().nodes) {
-        node.fx = undefined;
-        node.fy = undefined;
+        node.fx = null;
+        node.fy = null;
       }
       const charge = this._forceGraph.d3Force("charge");
       if (charge) charge.strength(-120);
@@ -422,55 +440,77 @@ export class GraphTabElement extends HTMLElement {
   private scheduleLayout() {
     if (this._layoutScheduled) return;
     this._layoutScheduled = true;
-    this.dlog("scheduleLayout — queued rAF");
 
     requestAnimationFrame(() => {
-      this.dlog("rAF fired");
       this._layoutScheduled = false;
       if (!this._graphData) return;
 
-      const nodeCount = Object.keys(this._graphData.nodes).length;
-
-      if (nodeCount > DAG_THRESHOLD) {
-        terminal.log(`Graph too large (${nodeCount} nodes) — using dag mode`);
-        this._dagMode = true;
-        this._pendingLayout = null;
-        this._loadingState = "ready";
-        notify(
-          `Graph too large for static layout (${nodeCount} nodes). Using force-directed dag mode.`,
-          5000,
-        );
-        this.initForceGraph();
-        return;
-      }
-
-      this._dagMode = false;
       try {
-        terminal.log("makeDagLayout START...");
         const t0 = performance.now();
-        this._pendingLayout = makeDagLayout(this._graphData);
-        const elapsed = performance.now() - t0;
-        terminal.log(`makeDagLayout DONE (${elapsed.toFixed(1)}ms)`);
-        this.dlog("makeDagLayout DONE");
+        this._graphLayout.update(this._graphData);
+        const layoutTime = performance.now() - t0;
+
         this._loadingState = "ready";
-        this.initForceGraph();
+
+        const t1 = performance.now();
+        this.syncForceGraph();
+        const renderTime = performance.now() - t1;
+
+        const nodeCount = this._graphLayout.nodeCount;
+        const edgeCount = Object.keys(this._graphData.edges).length;
+
+        terminal.log(
+          `layout-performance: mode=${this._layoutMode} layout=${layoutTime.toFixed(1)}ms render=${renderTime.toFixed(1)}ms nodes=${nodeCount} edges=${edgeCount}`,
+        );
+
+        emitEvent(this, "layout-performance", {
+          layoutMode: this._layoutMode,
+          layoutTime,
+          renderTime,
+          nodeCount,
+          edgeCount,
+        });
       } catch (e) {
-        terminal.log("LAYOUT ERROR: " + e);
-        this.dlog("ERROR: " + e);
-        console.error("dagre layout failed:", e);
+        terminal.log(`layout error: ${e}`);
         this._loadingState = "error";
         this.render();
       }
     });
   }
 
-  private initForceGraph() {
+  private syncForceGraph() {
+    const { nodes, links } = this._graphLayout.toForceGraphData();
+
+    this._edgeWaypoints.clear();
+    this._nodePositionMap.clear();
+
+    for (const node of nodes) {
+      if (node.x || node.y) {
+        this._nodePositionMap.set(node.id, { x: node.x, y: node.y });
+      }
+    }
+
+    if (!this._forceGraph) {
+      this.initForceGraph(nodes, links);
+      return;
+    }
+
+    this._forceGraph.graphData({ nodes, links } as any);
+
+    if (this._layoutMode === "fg-dag") {
+      this._forceGraph.dagMode("td").dagLevelDistance(NODE_SIZE + 92);
+    } else {
+      this._forceGraph.dagMode(null as any);
+      this._forceGraph
+        .d3Force("charge", null)
+        .d3Force("link", null)
+        .d3Force("center", null)
+        .enableNodeDrag(false);
+    }
+  }
+
+  private initForceGraph(nodes: ForceGraphNode[], links: ForceGraphLink[]) {
     terminal.log("initForceGraph START");
-    const t0 = performance.now();
-    this.dlog("initForceGraph START");
-    const layout = this._pendingLayout;
-    const graphData = this._graphData;
-    if (!graphData) return;
 
     if (this._forceGraph) {
       this._forceGraph._destructor();
@@ -478,7 +518,6 @@ export class GraphTabElement extends HTMLElement {
     this.shadowRoot!.innerHTML = "";
     this._forceGraph = null;
     this._thumbnailCache.clear();
-    terminal.log("  cleared old state");
 
     const container = document.createElement("div");
     container.className = "canvas-host";
@@ -488,18 +527,17 @@ export class GraphTabElement extends HTMLElement {
     inspector.className = "inspector";
     inspector.innerHTML = /* html */ `<summary>?</summary><div class="inspector-body"><p>Select a node or edge to inspect.</p></div>`;
     this.shadowRoot!.appendChild(inspector);
-    terminal.log("1");
 
     this._graphControls = document.createElement(
       "graph-controls",
     ) as GraphControlsElement;
+    this._graphControls.layoutMode = this._layoutMode;
     this.shadowRoot!.appendChild(this._graphControls);
 
     this._graphControls.addEventListener("navigate-node", ((e: CustomEvent) => {
       this.centerOnNode(e.detail.nodeId);
     }) as EventListener);
 
-    terminal.log("2");
     this._graphControls.addEventListener("zoom-change", ((e: CustomEvent) => {
       this.zoomBy(e.detail.direction);
     }) as EventListener);
@@ -510,51 +548,14 @@ export class GraphTabElement extends HTMLElement {
         this._graphControls.physicsEnabled = this.physicsEnabled;
     }) as EventListener);
 
-    this._edgeWaypoints.clear();
-    this._nodePositionMap.clear();
+    this._graphControls.addEventListener("layout-change", ((e: CustomEvent) => {
+      this.layoutMode = e.detail.mode;
+    }) as EventListener);
 
-    terminal.log("  building nodes array...");
-    const t1 = performance.now();
-    const nodes = Object.keys(graphData.nodes).map((board_id) => {
-      const pos = layout?.nodes[nodeKey(board_id)];
-      const nodeData = graphData.nodes[board_id];
-      if (pos) this._nodePositionMap.set(nodeKey(board_id), pos);
-      return {
-        id: nodeKey(board_id),
-        boardId: board_id,
-        board: nodeData,
-        x: pos?.x ?? 0,
-        y: pos?.y ?? 0,
-      };
-    });
-
-    const links: ForceGraphLink[] = [];
-    for (const edge_id of Object.keys(graphData.edges)) {
-      const edge = graphData.edges[edge_id];
-      const sourceKey = nodeKey(edge.from);
-      const targetKey = nodeKey(edge.to);
-      const pts =
-        layout?.edges.find((e) => e.edge_id === edge_id)?.points ?? [];
-      this._edgeWaypoints.set(edgeKey(edge_id), pts);
-      links.push({
-        id: edgeKey(edge_id),
-        edgeId: edge_id,
-        edge: edge,
-        source: sourceKey,
-        target: targetKey,
-      });
-    }
-    terminal.log(
-      `  nodes=${nodes.length}, links=${links.length} (${(performance.now() - t1).toFixed(1)}ms)`,
-    );
-
-    terminal.log("  creating ForceGraph instance...");
-    const t2 = performance.now();
     const fg = new ForceGraph(container as HTMLElement);
     this._forceGraph = fg;
-    this.dlog("new ForceGraph done — chaining config...");
 
-    fg.graphData({ nodes, links })
+    fg.graphData({ nodes, links } as any)
       .nodeId("id")
       .linkSource("source")
       .linkTarget("target")
@@ -575,23 +576,11 @@ export class GraphTabElement extends HTMLElement {
       .minZoom(0.2)
       .maxZoom(3);
 
-    if (this._dagMode) {
+    if (this._layoutMode === "fg-dag") {
       fg.dagMode("td").dagLevelDistance(NODE_SIZE + 92);
     } else {
       fg.d3Force("charge", null).d3Force("link", null).d3Force("center", null);
     }
-    terminal.log(
-      `  ForceGraph config done (${(performance.now() - t2).toFixed(1)}ms)`,
-    );
-    this.dlog("config chain done");
-
-    if (!this._dagMode) {
-      for (const node of fg.graphData().nodes) {
-        node.fx = node.x;
-        node.fy = node.y;
-      }
-    }
-    this.dlog("fx/fy set — scheduling zoomToFit");
 
     requestAnimationFrame(() => {
       fg.zoomToFit(400, 40);
@@ -609,15 +598,13 @@ export class GraphTabElement extends HTMLElement {
     );
 
     requestAnimationFrame(() => {
-      const t3 = performance.now();
-      this._graphControls!.markers = buildNavMarkers(
-        graphData,
-        this._games,
-        this._activeGameId,
-      );
-      terminal.log(
-        `buildNavMarkers deferred (${(performance.now() - t3).toFixed(1)}ms)`,
-      );
+      if (this._graphData) {
+        this._graphControls!.markers = buildNavMarkers(
+          this._graphData as any,
+          this._games,
+          this._activeGameId,
+        );
+      }
     });
   }
 
@@ -884,36 +871,29 @@ export class GraphTabElement extends HTMLElement {
     const inspector = this.shadowRoot!.querySelector<HTMLElement>(".inspector");
     if (!inspector) return;
 
-    const graphData = this._graphData;
     const body = inspector.querySelector<HTMLElement>(".inspector-body");
-    if (!body || !graphData) return;
+    if (!body || !this._graphData) return;
 
     const selectedNode = this.selectedId?.startsWith("board:")
-      ? graphData.nodes[this.selectedId.slice("board:".length)]
+      ? this._graphData.nodes[this.selectedId]
       : undefined;
     const selectedEdge = this.selectedId?.startsWith("edge:")
-      ? graphData.edges[this.selectedId.slice("edge:".length)]
+      ? this._graphData.edges[this.selectedId]
       : undefined;
-    const selectedEdgeId = selectedEdge
-      ? this.selectedId!.slice("edge:".length)
-      : null;
-    const selectedNodeId = selectedNode
-      ? this.selectedId!.slice("board:".length)
-      : null;
 
     body.innerHTML = /* html */ `
       ${
         selectedNode
           ? `<p class="eyebrow">Selected board</p>
-             <h3>${selectedNodeId ?? ""}</h3>
-             <p>${selectedNode.dim.join(" × ")} board</p>
-             <p>${boardSummary(selectedNode)}</p>`
+             <h3>${this.selectedId}</h3>
+             <p>${selectedNode.board.dim.join(" × ")} board</p>
+             <p>${boardSummary(selectedNode.board)}</p>`
           : ""
       }
       ${
         selectedEdge
           ? `<p class="eyebrow">Selected transition</p>
-             <h3>${selectedEdgeId}</h3>
+             <h3>${this.selectedId}</h3>
              <p>${edgeLabel(selectedEdge)}</p>
              <p>${selectedEdge.from.slice(0, 10)} → ${selectedEdge.to.slice(0, 10)}</p>`
           : ""

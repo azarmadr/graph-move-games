@@ -11,7 +11,6 @@ import {
   type Direction,
   type GameConfig,
   type GameInstance,
-  type GraphData,
 } from "../utils/wasmBridge";
 import { GraphTabElement } from "./GraphTab";
 import { GameBoardElement } from "./GameBoard";
@@ -135,7 +134,9 @@ export class GameAppElement extends HTMLElement {
   };
   private lastMove: { moved: boolean; scoreGained: number } | null = null;
   private activeTab: "play" | "graph" = "play";
-  private visualizationGraph: GraphData | null = null;
+  private visualizationGraph:
+    | import("../utils/wasmBridge").WasmGraphData
+    | null = null;
   private visualizationGames: GameInstance[] = [];
   private visualizationActiveGameId: string | null = null;
   private resumeGames: GameInstance[] = [];
