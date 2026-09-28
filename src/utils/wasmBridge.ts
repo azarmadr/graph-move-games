@@ -1,5 +1,7 @@
 /* WASM Bridge — types that mirror the Rust JSON contract exactly */
 
+import type { LayoutMode } from "./layoutMode";
+
 export interface Pos {
   r: number;
   c: number;
@@ -41,6 +43,17 @@ export type BoardId = string;
 export type EdgeId = string;
 export interface GraphData {
   nodes: { [key: BoardId]: Board };
+  edges: { [key: EdgeId]: Edge };
+}
+
+export interface WasmLayoutNode {
+  board: Board;
+  x?: number;
+  y?: number;
+}
+
+export interface WasmGraphData {
+  nodes: { [key: BoardId]: WasmLayoutNode };
   edges: { [key: EdgeId]: Edge };
 }
 
@@ -106,10 +119,13 @@ export async function getState(gameId: string): Promise<GameState> {
   return JSON.parse(json) as GameState;
 }
 
-export async function getGraph(): Promise<GraphData> {
+export async function getGraph(
+  pruneEdges = false,
+  layoutMode: LayoutMode = "dagre",
+): Promise<WasmGraphData> {
   const m = await loadWasm();
-  const json = m.get_graph();
-  return JSON.parse(json) as GraphData;
+  const json = m.get_graph(pruneEdges, layoutMode);
+  return JSON.parse(json) as WasmGraphData;
 }
 
 export async function exportGraph(): Promise<ExportData> {

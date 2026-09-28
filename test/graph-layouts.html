@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Graph Layout Benchmark</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { height: 100%; }
+    body {
+      font-family: system-ui, sans-serif; background: #1a1a2e; color: #f9f6f2;
+      padding: 16px; display: flex; flex-direction: column; gap: 12px;
+      overflow: hidden;
+    }
+    h1 { font-size: 20px; flex: 0 0 auto; }
+    .subtitle { font-size: 13px; color: #9b8f82; flex: 0 0 auto; }
+
+    .controls { flex: 0 0 auto; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    .controls label { font-size: 13px; color: #9b8f82; }
+    .controls select, .controls button {
+      padding: 6px 12px; border-radius: 6px; border: 1px solid #d8cbbb;
+      background: #2a2a45; color: #f9f6f2; font-size: 13px; cursor: pointer;
+    }
+    .controls button:disabled { opacity: 0.4; cursor: default; }
+    .controls button.active { background: #4cc9f0; color: #2a2a45; border-color: #4cc9f0; }
+
+    .toggle-group { display: flex; gap: 0; }
+    .toggle-group button {
+      border-radius: 0; border-right: none;
+    }
+    .toggle-group button:first-child { border-radius: 6px 0 0 6px; }
+    .toggle-group button:last-child { border-radius: 0 6px 6px 0; border-right: 1px solid #d8cbbb; }
+
+    .results { flex: 0 0 auto; border: 1px solid #3a3a5c; border-radius: 10px; background: #2a2a45; }
+    .results > summary {
+      padding: 8px 12px; font-size: 13px; color: #9b8f82; cursor: pointer;
+      list-style: none; user-select: none;
+    }
+    .results > summary::-webkit-details-marker { display: none; }
+    .results > summary::before { content: "\25B6"; display: inline-block; margin-right: 8px; font-size: 10px; }
+    .results[open] > summary::before { content: "\25BC"; }
+    .results > summary span { color: #4cc9f0; font-weight: 600; }
+    .results-scroll { max-height: 40vh; overflow: auto; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th, td { padding: 8px 12px; text-align: left; border-bottom: 1px solid #3a3a5c; }
+    th { color: #9b8f82; font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+    td { font-variant-numeric: tabular-nums; }
+    tr.highlight { background: rgba(76, 201, 240, 0.08); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 700; }
+    .badge-pass { background: #1a5c1a; color: #4caf50; }
+    .badge-warn { background: #5c5c1a; color: #ffc107; }
+    .badge-fail { background: #5c1a1a; color: #f44336; }
+    .badge-na { background: #3a3a5c; color: #9b8f82; }
+    .empty-row td { color: #9b8f82; font-style: italic; text-align: center; }
+
+    .graph-area {
+      flex: 1 1 auto; min-height: 0; display: flex;
+      border: 1px solid #3a3a5c; border-radius: 10px;
+      background: #2a2a45; position: relative; overflow: hidden;
+    }
+    .graph-area > graph-tab { flex: 1 1 auto; min-height: 300px; display: block; }
+    .graph-placeholder {
+      display: flex; align-items: center; justify-content: center;
+      width: 100%; color: #9b8f82; font-size: 14px;
+    }
+  </style>
+</head>
+<body>
+  <h1>Graph Layout Benchmark</h1>
+  <p class="subtitle">Switch layout modes and pruning to compare performance. Serve via <code>pnpm dev</code> and open <code>/test/graph-layouts.html</code>.</p>
+
+  <div class="controls">
+    <label for="graph-select">Graph:</label>
+    <select id="graph-select"><option value="">Loading...</option></select>
+
+    <label>Layout:</label>
+    <div class="toggle-group" id="layout-group">
+      <button data-mode="dagre" class="active">Dagre</button>
+      <button data-mode="fg-dag">Force Dag</button>
+      <button data-mode="visgraph">Visgraph</button>
+    </div>
+
+    <label>
+      <input type="checkbox" id="prune-toggle"> Prune edges
+    </label>
+
+    <button id="clear-btn">Clear results</button>
+    <span id="status" style="font-size: 13px; color: #9b8f82;"></span>
+  </div>
+
+  <details class="results" id="results-details">
+    <summary>Performance Results (<span id="result-count">0</span>)</summary>
+    <div class="results-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Graph</th>
+            <th>Layout</th>
+            <th>Prune</th>
+            <th>Nodes</th>
+            <th>Edges</th>
+            <th>Layout time</th>
+            <th>Render time</th>
+            <th>Layout badge</th>
+          </tr>
+        </thead>
+        <tbody id="results-body">
+          <tr class="empty-row"><td colspan="8">No results yet. Select a graph and layout mode.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <div class="graph-area" id="graph-area">
+    <div class="graph-placeholder" id="graph-placeholder">Loading graph...</div>
+  </div>
+
+  <script type="module">
+    import init, { get_graph, import_graph } from "../public/wasm-pkg/game_wasm.js";
+    import { GraphTabElement } from "../src/components/GraphTab.ts";
+    import { GraphControlsElement } from "../src/components/GraphControls.ts";
+
+    if (!customElements.get("graph-controls")) {
+      customElements.define("graph-controls", GraphControlsElement);
+    }
+    if (!customElements.get("graph-tab")) {
+      customElements.define("graph-tab", GraphTabElement);
+    }
+
+    const THRESHOLDS = {
+      dagre:    { layoutTime: 5000, renderTime: 3000 },
+      visgraph: { layoutTime: 500,  renderTime: 1500 },
+      "fg-dag": { layoutTime: 0,    renderTime: 1000 },
+    };
+
+    const results = [];
+    let currentGraphName = "";
+    let currentMode = "dagre";
+    let currentPrune = false;
+    let graphTab = null;
+    let graphPlaceholder = document.getElementById("graph-placeholder");
+
+    const graphSelect = document.getElementById("graph-select");
+    const layoutGroup = document.getElementById("layout-group");
+    const pruneToggle = document.getElementById("prune-toggle");
+    const clearBtn = document.getElementById("clear-btn");
+    const statusEl = document.getElementById("status");
+    const resultsBody = document.getElementById("results-body");
+    const resultsDetails = document.getElementById("results-details");
+    const resultCount = document.getElementById("result-count");
+    const graphArea = document.getElementById("graph-area");
+
+    function badgeHtml(value, threshold) {
+      if (threshold === 0) return '<span class="badge badge-na">N/A</span>';
+      const ratio = value / threshold;
+      if (ratio <= 1) return '<span class="badge badge-pass">PASS</span>';
+      if (ratio <= 1.5) return '<span class="badge badge-warn">WARN</span>';
+      return '<span class="badge badge-fail">FAIL</span>';
+    }
+
+    function renderResults() {
+      resultCount.textContent = String(results.length);
+      if (results.length === 0) {
+        resultsBody.innerHTML = '<tr class="empty-row"><td colspan="8">No results yet. Select a graph and layout mode.</td></tr>';
+        return;
+      }
+      resultsBody.innerHTML = results.map((r, i) => {
+        const t = THRESHOLDS[r.layoutMode] || {};
+        const isLatest = i === results.length - 1;
+        return `<tr class="${isLatest ? "highlight" : ""}">
+          <td>${r.graph}</td>
+          <td>${r.layoutMode}</td>
+          <td>${r.prune ? "yes" : "no"}</td>
+          <td>${r.nodeCount}</td>
+          <td>${r.edgeCount}</td>
+          <td>${r.layoutTime.toFixed(1)}ms</td>
+          <td>${r.renderTime.toFixed(1)}ms</td>
+          <td>${badgeHtml(r.layoutTime, t.layoutTime ?? 0)}</td>
+        </tr>`;
+      }).join("");
+    }
+
+    function addResult(data) {
+      results.push({
+        graph: currentGraphName,
+        layoutMode: data.layoutMode,
+        prune: currentPrune,
+        nodeCount: data.nodeCount,
+        edgeCount: data.edgeCount,
+        layoutTime: data.layoutTime,
+        renderTime: data.renderTime,
+      });
+      renderResults();
+    }
+
+    function onLayoutPerformance(e) {
+      addResult(e.detail);
+      statusEl.textContent = `${e.detail.nodeCount} nodes — ${e.detail.layoutMode} layout: ${e.detail.layoutTime.toFixed(1)}ms, render: ${e.detail.renderTime.toFixed(1)}ms`;
+    }
+
+    function destroyGraphTab() {
+      if (!graphTab) return;
+      graphTab.remove();
+      graphTab = null;
+    }
+
+    function createGraphTab() {
+      destroyGraphTab();
+      if (graphPlaceholder) {
+        graphPlaceholder.remove();
+        graphPlaceholder = null;
+      }
+      graphTab = document.createElement("graph-tab");
+      graphTab.layoutMode = currentMode;
+      graphTab.addEventListener("layout-performance", onLayoutPerformance);
+      graphArea.appendChild(graphTab);
+    }
+
+    async function loadGraphIntoComponent() {
+      const url = graphSelect.value;
+      if (!url) return;
+
+      currentGraphName = graphSelect.selectedOptions[0]?.textContent ?? "";
+      statusEl.textContent = "Loading graph...";
+
+      try {
+        const resp = await fetch(url);
+        const data = await resp.json();
+        const payload = data.exportData ? JSON.stringify(data.exportData) : JSON.stringify(data);
+        const result = JSON.parse(import_graph(payload));
+        if (!result.success) throw new Error("Import failed");
+
+        const graphJson = get_graph(currentPrune, currentMode);
+        const graphData = JSON.parse(graphJson);
+
+        const nodeCount = Object.keys(graphData.nodes).length;
+        const edgeCount = Object.keys(graphData.edges).length;
+        statusEl.textContent = `${nodeCount} nodes, ${edgeCount} edges — ${currentMode}${currentPrune ? " (pruned)" : ""}`;
+
+        graphTab.graphData = graphData;
+      } catch (e) {
+        statusEl.textContent = `Error: ${e.message}`;
+        console.error(e);
+      }
+    }
+
+    async function reloadGraph() {
+      destroyGraphTab();
+      await loadGraphIntoComponent();
+    }
+
+    layoutGroup.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-mode]");
+      if (!btn) return;
+      layoutGroup.querySelectorAll("button").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      currentMode = btn.dataset.mode;
+      reloadGraph();
+    });
+
+    pruneToggle.addEventListener("change", () => {
+      currentPrune = pruneToggle.checked;
+      reloadGraph();
+    });
+
+    graphSelect.addEventListener("change", () => {
+      reloadGraph();
+    });
+
+    clearBtn.addEventListener("click", () => {
+      results.length = 0;
+      renderResults();
+    });
+
+    async function main() {
+      statusEl.textContent = "Initializing WASM...";
+      await init();
+
+      statusEl.textContent = "Discovering graphs...";
+      const candidates = [
+        "game-2048-persisted.1.json",
+        "game-2048-persisted.json",
+        "game-2048-persisted.3.json",
+        "game-2048-persisted.2.json",
+      ];
+      const found = [];
+      for (const name of candidates) {
+        try {
+          const resp = await fetch(`../.data/${name}`);
+          if (resp.ok) found.push({ name, url: `../.data/${name}` });
+        } catch {}
+      }
+      graphSelect.innerHTML = found.length
+        ? found.map((g) => `<option value="${g.url}">${g.name}</option>`).join("")
+        : '<option value="">No graphs found</option>';
+
+      if (!customElements.get("graph-controls")) {
+        customElements.define("graph-controls", GraphControlsElement);
+      }
+      if (!customElements.get("graph-tab")) {
+        customElements.define("graph-tab", GraphTabElement);
+      }
+
+      if (!found.length) {
+        graphArea.innerHTML = '<div class="graph-placeholder">No saved graphs found in .data/</div>';
+        statusEl.textContent = "No graphs found in .data/";
+        return;
+      }
+
+      createGraphTab();
+      await loadGraphIntoComponent();
+    }
+
+    main();
+  </script>
+</body>
+</html>
