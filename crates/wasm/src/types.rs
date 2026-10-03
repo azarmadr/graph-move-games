@@ -7,10 +7,6 @@ use {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Node {
     pub board: Board,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub x: Option<f32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub y: Option<f32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

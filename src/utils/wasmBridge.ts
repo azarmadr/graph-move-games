@@ -1,7 +1,5 @@
 /* WASM Bridge — types that mirror the Rust JSON contract exactly */
 
-import type { LayoutMode } from "./layoutMode";
-
 export interface Pos {
   r: number;
   c: number;
@@ -48,8 +46,6 @@ export interface GraphData {
 
 export interface WasmLayoutNode {
   board: Board;
-  x?: number;
-  y?: number;
 }
 
 export interface WasmGraphData {
@@ -119,12 +115,9 @@ export async function getState(gameId: string): Promise<GameState> {
   return JSON.parse(json) as GameState;
 }
 
-export async function getGraph(
-  pruneEdges = false,
-  layoutMode: LayoutMode = "dagre",
-): Promise<WasmGraphData> {
+export async function getGraph(): Promise<WasmGraphData> {
   const m = await loadWasm();
-  const json = m.get_graph(pruneEdges, layoutMode);
+  const json = m.get_graph();
   return JSON.parse(json) as WasmGraphData;
 }
 

@@ -1,7 +1,5 @@
 import "./index.css";
 import { GameAppElement } from "./components/GameApp";
-import { GraphTabElement } from "./components/GraphTab";
-import { GraphControlsElement } from "./components/GraphControls";
 import { GameBoardElement } from "./components/GameBoard";
 
 function showError(error: unknown) {
@@ -37,6 +35,4 @@ window.addEventListener("unhandledrejection", (event) => {
 });
 
 customElements.define("game-app", GameAppElement);
-customElements.define("graph-tab", GraphTabElement);
-customElements.define("graph-controls", GraphControlsElement);
 customElements.define("game-board", GameBoardElement);

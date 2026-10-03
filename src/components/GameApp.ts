@@ -11,7 +11,6 @@ import {
   type GameConfig,
   type GameInstance,
 } from "../utils/wasmBridge";
-import { GraphTabElement } from "./GraphTab";
 import { GameBoardElement } from "./GameBoard";
 
 const sheet = new CSSStyleSheet();
@@ -107,9 +106,6 @@ sheet.replaceSync(/* css */ `
     opacity: 0.45;
   }
 
-  .graph-container {
-    position: relative;
-  }
 
   .upload-input {
     display: none;
@@ -133,8 +129,6 @@ export class GameAppElement extends HTMLElement {
   };
   private lastMove: { moved: boolean; scoreGained: number } | null = null;
   private activeTab: "play" | "graph" = "play";
-  private visualizationGames: GameInstance[] = [];
-  private visualizationActiveGameId: string | null = null;
   private resumeGames: GameInstance[] = [];
 
   private static readonly STORAGE_KEY = "game-2048-persisted-v1";
@@ -270,34 +264,6 @@ export class GameAppElement extends HTMLElement {
     this.setStateAndRender(s);
   }
 
-  private async openGraphVisualization() {
-    terminal.log("openGraphVisualization START");
-    const t0 = performance.now();
-    this.activeTab = "graph";
-    terminal.log("activeTab set, calling render()...");
-    this.render();
-    terminal.log(
-      `render() done (${(performance.now() - t0).toFixed(1)}ms) — graph-tab in DOM`,
-    );
-
-    try {
-      terminal.log("awaiting getGraph + exportGraph...");
-      const t1 = performance.now();
-      const [snapshot] = await Promise.all([exportGraph()]);
-      terminal.log(
-        `WASM done (${(performance.now() - t1).toFixed(1)}ms) — nodes=${Object.keys(graph.nodes).length}, edges=${Object.keys(graph.edges).length}`,
-      );
-      this.visualizationGames = Object.values(snapshot.games);
-      this.visualizationActiveGameId = this.state?.game.id ?? null;
-      terminal.log("calling linkGraphTab...");
-      this.linkGraphTab();
-      terminal.log("linkGraphTab done");
-    } catch (e) {
-      terminal.log("ERROR: " + e);
-      console.error("graph visualization snapshot failed:", e);
-    }
-  }
-
   private render() {
     const tab = this.activeTab;
     const sizeOptions = [
@@ -343,14 +309,6 @@ export class GameAppElement extends HTMLElement {
           >
             Play
           </button>
-          <button
-            class="${tab === "graph" ? "app-tab active" : "app-tab"}"
-            type="button"
-            data-tab="graph"
-            ${!this.state ? "disabled" : ""}
-          >
-            Graph
-          </button>
         </div>
 
         <button
@@ -380,11 +338,6 @@ export class GameAppElement extends HTMLElement {
       <div class="tab-content ${tab === "play" ? "active" : ""}">
         <game-board></game-board>
       </div>
-      <div class="tab-content ${tab === "graph" ? "active" : ""}">
-        <div class="graph-container">
-          <graph-tab></graph-tab>
-        </div>
-      </div>
     `;
 
     this.bindEvents();
@@ -396,12 +349,8 @@ export class GameAppElement extends HTMLElement {
       "[data-tab]",
     )) {
       btn.addEventListener("click", () => {
-        if (btn.dataset.tab === "graph") {
-          void this.openGraphVisualization();
-        } else {
-          this.activeTab = "play";
-          this.render();
-        }
+        this.activeTab = "play";
+        this.render();
       });
     }
 
@@ -494,13 +443,5 @@ export class GameAppElement extends HTMLElement {
       });
     }
 
-    this.linkGraphTab();
-  }
-
-  private linkGraphTab() {
-    const el = this.shadowRoot!.querySelector<GraphTabElement>("graph-tab");
-    if (!el) return;
-    el.games = this.visualizationGames;
-    el.activeGameId = this.visualizationActiveGameId ?? undefined;
   }
 }

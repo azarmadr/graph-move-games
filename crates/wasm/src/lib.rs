@@ -1,5 +1,3 @@
-mod layout;
-mod prune;
 mod types;
 
 use {
@@ -22,8 +20,6 @@ fn build_graph_layout(engine: &Engine) -> GraphLayout {
             format!("board:{}", board_id.0),
             Node {
                 board: board.clone(),
-                x: None,
-                y: None,
             },
         );
     }
@@ -109,22 +105,11 @@ pub fn make_move(game_id_str: String, direction: String) -> Result<String, JsVal
 }
 
 /// Get the graph as JSON string (for the visualization tab).
-/// prune_edges: if true, removes bidirectional edges
-/// layout_mode: "dagre" | "fg-dag" | "visgraph" — if "visgraph", positions are computed in WASM
 #[wasm_bindgen]
-pub fn get_graph(prune_edges: bool, layout_mode: String) -> Result<String, JsValue> {
+pub fn get_graph() -> Result<String, JsValue> {
     ENGINE.with(|e| {
         let engine = e.borrow();
-        let mut graph = build_graph_layout(&engine);
-
-        if prune_edges {
-            prune::prune_reverse_edges(&mut graph);
-        }
-
-        if layout_mode == "visgraph" {
-            layout::apply_visgraph_layout(&mut graph);
-        }
-
+        let graph = build_graph_layout(&engine);
         serde_json::to_string(&graph)
             .map_err(|err| JsValue::from_str(&format!("serialize error: {}", err)))
     })
@@ -191,24 +176,5 @@ mod tests {
         engine.create_game(&GameConfig::default()).unwrap();
         let layout = build_graph_layout(&engine);
         assert!(!layout.nodes.is_empty());
-    }
-
-    #[test]
-    fn visgraph_layout_applies_positions() {
-        ENGINE.with(|e| {
-            let mut engine = e.borrow_mut();
-            let game = engine.create_game(&GameConfig::default()).unwrap();
-            engine.make_move(game.game.id, Direction::Up).unwrap();
-            engine.make_move(game.game.id, Direction::Down).unwrap();
-        });
-        let graph = get_graph(true, "visgraph".to_string()).unwrap();
-        let layout: GraphLayout = serde_json::from_str(&graph).unwrap();
-        eprintln!("{layout:?} {graph:?}");
-
-        assert!(!layout.edges.is_empty());
-        for node in layout.nodes.values() {
-            assert!(node.x.is_some());
-            assert!(node.y.is_some());
-        }
     }
 }
