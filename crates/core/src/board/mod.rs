@@ -141,108 +141,179 @@ impl Board {
     }
 
     /// Returns directions that produce a valid move from this board.
-    /// Only directions that actually change the board are included.
+    ///
+    /// A line changes when a tile can slide toward the direction, or when two
+    /// tiles that become adjacent after compacting are equal. Scans the line
+    /// in place: no board clone and no per-line allocation.
     pub fn valid_moves(&self) -> Vec<Direction> {
         use crate::Direction::*;
+
+        fn line_moves(line: impl Iterator<Item = u32>) -> bool {
+            let mut seen_zero = false;
+            let mut previous: Option<u32> = None;
+
+            for tile in line {
+                if tile == 0 {
+                    seen_zero = true;
+                } else {
+                    // A zero before this tile means it can slide toward the
+                    // start; an equal predecessor means it can merge.
+                    if seen_zero || previous == Some(tile) {
+                        return true;
+                    }
+                    previous = Some(tile);
+                }
+            }
+
+            false
+        }
+
         let mut valid = Vec::new();
 
-        // Helper: check if a line can move left (has sliding or merging potential)
-        fn line_can_move_left(line: &[&u32]) -> bool {
-            let len = line.len();
-            // Check for empty space a tile can slide into
-            for i in 0..len {
-                if *line[i] != 0 {
-                    // Can slide left if there's a zero to its left
-                    if i > 0 && *line[i - 1] == 0 {
-                        return true;
-                    }
-                    // Can merge with left neighbor
-                    if i > 0 && *line[i] == *line[i - 1] {
-                        return true;
-                    }
-                }
-            }
-            // Check from the left: is there a non-zero with only zeros to its left?
-            let mut all_zeros_left = true;
-            for &&i in line.iter() {
-                if i != 0 {
-                    all_zeros_left = false;
-                    break;
-                }
-            }
-            // If there are non-zero tiles and not all at position 0, can slide
-            if !all_zeros_left {
-                let first_nonzero = line.iter().position(|&&x| x != 0).unwrap_or(len);
-                if first_nonzero > 0 {
-                    return true;
-                }
-            }
-            false
+        if self.tiles.iter_rows().any(|row| line_moves(row.copied())) {
+            valid.push(Left);
         }
-
-        // Helper: check if a line can move right
-        fn line_can_move_right(line: &[&u32]) -> bool {
-            let len = line.len();
-            // Check from the right: is there a non-zero not at position len-1?
-            let last_nonzero = line.iter().rposition(|&&x| x != 0).unwrap_or(len);
-            if last_nonzero < len - 1 {
-                return true; // Can slide right
-            }
-            // Check for adjacent equal tiles
-            for i in (1..len).rev() {
-                if *line[i] != 0 && *line[i] == *line[i - 1] {
-                    return true; // Can merge
-                }
-            }
-            false
-        }
-
-        // Helper: check if a line can move up (same logic as left)
-        fn line_can_move_up(line: &[&u32]) -> bool {
-            line_can_move_left(line)
-        }
-
-        // Helper: check if a line can move down (same logic as right)
-        fn line_can_move_down(line: &[&u32]) -> bool {
-            line_can_move_right(line)
-        }
-
-        // Check Left: any row has a tile that can slide/merge left
         if self
             .tiles
             .iter_rows()
-            .any(|row| line_can_move_left(&row.collect::<Vec<_>>()))
+            .any(|row| line_moves(row.rev().copied()))
         {
-            valid.push(Left);
+            valid.push(Right);
         }
-
-        // Check Right: any row has a tile that can slide/merge right
-        if self
-            .tiles
-            .iter_rows()
-            .any(|row| line_can_move_right(&row.collect::<Vec<_>>()))
-        {
-            valid.push(Left);
+        if self.tiles.iter_cols().any(|col| line_moves(col.copied())) {
+            valid.push(Up);
         }
-
-        // Check Up: any column has a tile that can slide/merge up
         if self
             .tiles
             .iter_cols()
-            .any(|col| line_can_move_up(&col.collect::<Vec<_>>()))
+            .any(|col| line_moves(col.rev().copied()))
         {
-            valid.push(Up);
-        }
-
-        // Check Down: any column has a tile that can slide/merge down
-        if self
-            .tiles
-            .iter_cols()
-            .any(|col| line_can_move_down(&col.collect::<Vec<_>>()))
-        {
-            valid.push(Up);
+            valid.push(Down);
         }
 
         valid
+    }
+}
+
+#[cfg(test)]
+mod valid_moves_tests {
+    use {super::*, crate::Direction, grid::Grid, std::collections::HashSet};
+
+    const ALL: [Direction; 4] = [
+        Direction::Up,
+        Direction::Down,
+        Direction::Left,
+        Direction::Right,
+    ];
+
+    /// The property: a direction is reported iff applying it changes the board,
+    /// and no direction is reported twice.
+    fn assert_valid_moves_are_exact(board: &Board) {
+        let reported = board.valid_moves();
+
+        let unique: HashSet<Direction> = reported.iter().copied().collect();
+        assert_eq!(
+            unique.len(),
+            reported.len(),
+            "duplicate directions {reported:?} for board {board:?}"
+        );
+
+        for dir in ALL {
+            let mut applied = board.clone();
+            applied.resolve_move(dir);
+            let changes = applied != *board;
+            assert_eq!(
+                reported.contains(&dir),
+                changes,
+                "direction {dir:?}: reported={} but changes={changes} for board {board:?}",
+                reported.contains(&dir)
+            );
+        }
+    }
+
+    /// `GameInstance::is_terminated` is `valid_moves().is_empty()` (game.rs), so
+    /// this board-level predicate is the game-level termination flag.
+    fn assert_termination_equivalence(board: &Board) {
+        let any_effective_swipe = ALL.iter().any(|&dir| {
+            let mut applied = board.clone();
+            applied.resolve_move(dir);
+            applied != *board
+        });
+
+        assert_eq!(
+            board.valid_moves().is_empty(),
+            !any_effective_swipe,
+            "valid_moves().is_empty() must match `no direction changes the board` for {board:?}"
+        );
+    }
+
+    fn for_each_exhaustive<const R: usize, const C: usize>(mut check: impl FnMut(&Board)) {
+        // Values 0, 1, 2 are enough to exercise empty cells, equal neighbours,
+        // and unequal neighbours; larger values behave the same for equality.
+        let cells = R * C;
+        let total = 3usize.pow(cells as u32);
+        for encoded in 0..total {
+            let mut grid = Grid::new(R, C);
+            let mut n = encoded;
+            for r in 0..R {
+                for c in 0..C {
+                    grid[(r, c)] = (n % 3) as u32;
+                    n /= 3;
+                }
+            }
+            check(&Board::with_tiles(grid));
+        }
+    }
+
+    fn for_each_random(rows: usize, cols: usize, count: usize, mut check: impl FnMut(&Board)) {
+        // xorshift64: fixed seed, no extra dependency, deterministic.
+        let mut state = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        let values = [0u32, 0, 0, 1, 2, 4, 8, 16];
+
+        for _ in 0..count {
+            let mut grid = Grid::new(rows, cols);
+            for r in 0..rows {
+                for c in 0..cols {
+                    grid[(r, c)] = values[(next() % values.len() as u64) as usize];
+                }
+            }
+            check(&Board::with_tiles(grid));
+        }
+    }
+
+    fn for_each_small_board(mut check: impl FnMut(&Board)) {
+        for_each_exhaustive::<1, 1>(&mut check);
+        for_each_exhaustive::<1, 2>(&mut check);
+        for_each_exhaustive::<2, 1>(&mut check);
+        for_each_exhaustive::<1, 3>(&mut check);
+        for_each_exhaustive::<3, 1>(&mut check);
+        for_each_exhaustive::<2, 2>(&mut check);
+        for_each_exhaustive::<2, 3>(&mut check);
+        for_each_exhaustive::<3, 2>(&mut check);
+        for_each_exhaustive::<3, 3>(&mut check);
+    }
+
+    #[test]
+    fn valid_moves_matches_application_exhaustively() {
+        for_each_small_board(assert_valid_moves_are_exact);
+    }
+
+    #[test]
+    fn valid_moves_matches_application_on_larger_boards() {
+        for_each_random(4, 4, 1_000, assert_valid_moves_are_exact);
+        for_each_random(5, 5, 1_000, assert_valid_moves_are_exact);
+        for_each_random(2, 5, 1_000, assert_valid_moves_are_exact);
+    }
+
+    #[test]
+    fn termination_is_equivalent_to_no_effective_swipe() {
+        for_each_small_board(assert_termination_equivalence);
+        for_each_random(4, 4, 1_000, assert_termination_equivalence);
     }
 }

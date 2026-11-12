@@ -25,9 +25,9 @@ impl Board {
     /// Length matches the dimension (rows for columns, cols for rows).
     fn merge_line(&mut self, idx: usize, is_row: bool, to_left: bool) -> Option<u32> {
         let len = if is_row {
-            self.tiles.rows()
-        } else {
             self.tiles.cols()
+        } else {
+            self.tiles.rows()
         };
 
         // TODO: reuse the valid moves check here to return None early

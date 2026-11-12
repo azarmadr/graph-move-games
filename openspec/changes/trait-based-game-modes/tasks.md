@@ -1,8 +1,8 @@
 ## 1. Fix `valid_swipes` before anything depends on it
 
-- [ ] 1.1 Add a property test for `Board::valid_moves`: for every board and every direction, the direction is reported iff applying it produces different content, and no direction appears twice.
-- [ ] 1.2 Fix `Board::valid_moves` (`board/mod.rs` ~225, ~243): it currently never reports `Right` or `Down` and can emit duplicates.
-- [ ] 1.3 Add the `is_terminated` equivalence test (`no swipes` ⟺ `terminated`) and confirm it passes before and after 1.2, so the fix is observed rather than assumed.
+- [x] 1.1 Add a property test for `Board::valid_moves`: for every board and every direction, the direction is reported iff applying it produces different content, and no direction appears twice.
+- [x] 1.2 Fix `Board::valid_moves` (`board/mod.rs` ~225, ~243): it currently never reports `Right` or `Down` and can emit duplicates. Also fixed `merge_line`'s swapped row/column length, which panicked on non-square boards, and replaced the broken line helpers with a correct in-place scan (no board clone, no per-line allocation) that detects slide-then-merge.
+- [x] 1.3 Add the `is_terminated` equivalence test (`no swipes` ⟺ `terminated`) and confirm it passes before and after 1.2, so the fix is observed rather than assumed.
 
 ## 2. `Grid`, `MergeRule`, and `BoardGame` on `Board`
 
