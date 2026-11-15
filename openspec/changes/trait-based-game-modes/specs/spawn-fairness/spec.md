@@ -4,15 +4,19 @@ Defines how a spawn is placed and how many tiles it places across the set of boa
 
 ## ADDED Requirements
 
-### Requirement: Spawn count is configurable per match
+### Requirement: The spawn variant configures the count
 
-The system SHALL allow the number of tiles a spawn places to be configured per match, with two modes: a fixed count, and a count scaled by the board's empty cells.
+The system SHALL take the number of tiles a spawn places from the game's spawn variant, with two Classic modes: a fixed count, and a count scaled by the board's empty cells. A Threes spawn places exactly one card.
 
 A scaled count SHALL be rounded up, SHALL NOT fall below one for a fillable slot, and SHALL NOT exceed that slot's number of empty positions.
 
 #### Scenario: Fixed count
-- **WHEN** a match configures a fixed spawn count of n
+- **WHEN** a Classic variant configures a fixed spawn count of n
 - **THEN** each spawn places n tiles on each fillable slot in scope
+
+#### Scenario: Threes places one card
+- **WHEN** the game's variant is Threes
+- **THEN** each spawn places exactly one tile on each fillable slot in scope, regardless of empty-cell count
 
 #### Scenario: Count scaled by empties
 - **WHEN** a match configures spawn count to scale by empty cells
@@ -97,6 +101,8 @@ A divergence event identifies the scope's slots and the position each received.
 ### Requirement: The candidate set is fixed before the agent chooses
 
 The system SHALL determine the set of positions an agent may choose from before the agent chooses, and SHALL NOT permit the agent to widen that set.
+
+The set starts from the spawn variant's candidate positions for each board in scope. The board reports every empty position; the variant narrows that report using the board's last swipe when its placement rule requires it, such as the Threes opposite-edge rule. A board with no last swipe admits every empty position.
 
 Holding the placement seat confers placement choice among the admissible positions; it does not confer discretion over what is admissible.
 

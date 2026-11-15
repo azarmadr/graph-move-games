@@ -62,13 +62,17 @@ The default strategy is rotation: a per-player cursor advances cyclically over t
 
 ### Requirement: Placement on the target board is free
 
-The system SHALL let the spawning player select any empty position on the target board, drawing the tile value from the mode's spawn configuration.
+The system SHALL let the spawning player select a position from the spawn variant's candidate set on the target board, drawing the tile value from the same variant.
 
-The candidate set SHALL be the empty positions of the target board alone. No position on any other board constrains the choice.
+For a Classic variant the candidate set is every empty position of the target board. For a Threes variant it is the opposite-edge cells, in the lines the target board's last swipe changed; a target with no last swipe admits every empty position. No position on any other board constrains the choice.
 
-#### Scenario: Any empty position may be chosen
-- **WHEN** a player spawns on a target board that has at least one empty position
+#### Scenario: Any empty position may be chosen under Classic spawning
+- **WHEN** a player with a Classic variant spawns on a target board that has at least one empty position
 - **THEN** the player may select any of the target board's empty positions
+
+#### Scenario: Threes spawning follows the target's last swipe
+- **WHEN** a player with a Threes variant spawns on a target board that has a last swipe trace
+- **THEN** the player may select only opposite-edge cells in the lines that swipe changed
 
 #### Scenario: An occupied position is rejected
 - **WHEN** a player selects a position that is not empty on the target board
@@ -79,15 +83,16 @@ The candidate set SHALL be the empty positions of the target board alone. No pos
 - **WHEN** a player selects an empty position on the target board that is occupied on another player's board
 - **THEN** the selection is accepted
 
-#### Scenario: Tile value follows the spawn configuration
+#### Scenario: Tile value follows the spawn variant
 - **WHEN** a player's spawn is accepted
-- **THEN** the placed tile's value is drawn according to the mode's spawn configuration weights
+- **THEN** a Classic spawn draws the placed tile's value according to the configured weights
+- **THEN** a Threes spawn places the deck's next card
 
 ### Requirement: A Crossfire opens with every player's spawn pending
 
 The system SHALL create a Crossfire with empty boards and one opening spawn obligation per player, rather than seeding a starting tile.
 
-The opening spawns SHALL resolve in seat order. Each SHALL target the first slot the player's rotation strategy selects, and SHALL place tiles according to the mode's spawn count. A player's cursor SHALL advance as if the opening spawn were an ordinary one, so their first swipe fires at the next target.
+The opening spawns SHALL resolve in seat order. Each SHALL target the first slot the player's rotation strategy selects, and SHALL place tiles according to the game's spawn variant and its count. A player's cursor SHALL advance as if the opening spawn were an ordinary one, so their first swipe fires at the next target.
 
 #### Scenario: Every player owes an opening spawn
 - **WHEN** a Crossfire is created for N players
@@ -104,9 +109,10 @@ The opening spawns SHALL resolve in seat order. Each SHALL target the first slot
 - **THEN** it targets the slot their rotation cursor names
 - **THEN** their cursor advances to the next slot for their first swipe-spawn
 
-#### Scenario: The opening spawn places the configured count
-- **WHEN** a Crossfire is created with a spawn count of k
+#### Scenario: The opening spawn places the variant's count
+- **WHEN** a Crossfire is created with a Classic variant count of k
 - **THEN** each opening spawn places up to k tiles on its target
+- **THEN** a Crossfire with the Threes variant places one card per opening spawn
 
 ### Requirement: A counterattack lands without waiting for other players
 
