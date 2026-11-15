@@ -1,19 +1,22 @@
 ## Purpose
 
-Defines the Threes tile rule and the Threes game mode. The rule supplies Threes merging and rarity scoring through `MergeRule`; the mode supplies the deck, the opposite-edge entry rule, and the seating. The two are separate so the rule composes with any mode and the mode composes with any rule.
+Defines the Threes spawn variant and the Threes merge threshold, and how they
+compose with every game mode. Threes is not a board type, a rule value, or a
+separate mode: it is the numeric board with `split = 3` merging, the
+spawn-only Threes variant, and the rarity score formula.
 
 ## ADDED Requirements
 
-### Requirement: Threes merge rules
+### Requirement: Threes merging is the threshold-3 rule
 
-The system SHALL merge, within a single swipe, a 1 with a 2 into a 3, and two equal tiles of value 3 or greater into their sum.
+The system SHALL play Threes on the numeric board with a merge threshold of 3.
 
-The system SHALL NOT merge 1 with 1, 2 with 2, or a tile produced by a merge in that same swipe.
-
-The rule SHALL be expressed as `Rule::Threes` implementing `MergeRule<u32>`, so the board asks its rule rather than checking a board type.
+The merge SHALL merge a 1 with a 2 into a 3, and two equal tiles of value 3 or
+greater into their sum. It SHALL NOT merge 1 with 1, 2 with 2, or a tile
+produced by a merge in that same swipe.
 
 #### Scenario: A one and a two become a three
-- **WHEN** a swipe brings a 1 and a 2 together
+- **WHEN** a swipe brings a 1 and a 2 together under the threshold-3 rule
 - **THEN** the resulting tile is 3
 
 #### Scenario: Equal threes become a six
@@ -36,30 +39,36 @@ The rule SHALL be expressed as `Rule::Threes` implementing `MergeRule<u32>`, so 
 - **WHEN** a swipe produces a merged tile and another equal tile is adjacent to it
 - **THEN** the produced tile does not merge again during that swipe
 
-### Requirement: Threes scores by tile rarity
+### Requirement: The threshold is configurable beyond Threes
 
-The system SHALL report a Threes swipe's score change as a replacement computed from the rarity table over the resulting board's tiles, not as the sum of the tiles' face values.
+The system SHALL allow the merge threshold to be configured, so a variant with
+a split other than 2 or 3 uses the same numeric board and the same rule.
 
-The replacement SHALL come from `MergeRule::score_delta` as `ScoreDelta::Set`, so the caller applies it without knowing the rule.
+A threshold `x` SHALL merge different tiles below `x` only when their sum is at
+most `x`, and SHALL merge equal tiles at or above `x`.
 
-#### Scenario: A merge reports the board's rarity score
-- **WHEN** two 3 tiles merge into a 6
-- **THEN** the reported replacement score is the rarity total of the resulting board
-- **THEN** that total includes the rarity value of the 6, which is not its face value
-- **THEN** the slot's score becomes that total rather than being increased by the merge
+#### Scenario: Threshold four
+- **WHEN** a game is configured with a merge threshold of 4 and a 1 and a 3 meet
+- **THEN** they merge into 4
+- **THEN** a 2 and a 3 do not merge because their sum exceeds 4
 
-#### Scenario: Color tiles score nothing
-- **WHEN** a board holds 1 and 2 tiles
-- **THEN** those tiles contribute nothing to the rarity score
+#### Scenario: The variant supplies a default
+- **WHEN** a Threes game is created without an explicit threshold
+- **THEN** its threshold is 3
+- **THEN** a Classic game created without an explicit threshold uses 2
 
-### Requirement: The next Threes tile comes from the deck
+### Requirement: Threes values come from the deck
 
-The system SHALL draw the next tile's value from the mode's shuffled deck and SHALL place exactly the cells the mode supplies; the board SHALL NOT hold or draw from the deck.
+The system SHALL draw the next Threes tile's value from the spawn variant's
+shuffled deck of 1, 2, and 3 cards, and SHALL place exactly the cells the
+variant supplies.
 
-The deck and its cursor SHALL be part of the serialized match state, so a restored save continues the same sequence.
+The board SHALL NOT hold or draw from the deck. The deck and its cursor SHALL
+be part of the serialized game state, so a restored save continues the same
+sequence.
 
 #### Scenario: The deck supplies the value
-- **WHEN** the Threes mode places its next card
+- **WHEN** the Threes variant places its next card
 - **THEN** the tile value is the deck's next card
 - **THEN** the board receives that value in the supplied cells and draws nothing itself
 
@@ -68,20 +77,28 @@ The deck and its cursor SHALL be part of the serialized match state, so a restor
 - **THEN** the deck's remaining cards and cursor are restored
 - **THEN** the next placement continues the same sequence
 
+#### Scenario: One card per spawn
+- **WHEN** the Threes variant is asked for a spawn count
+- **THEN** the count is one card
+
 ### Requirement: Threes placement enters from the opposite edge
 
-The system SHALL, after a Threes swipe, restrict the placement candidate set to empty cells on the edge opposite the swipe direction, in the lines the swipe actually changed.
+The system SHALL, after a Threes swipe, restrict the spawn candidate set to
+empty cells on the edge opposite the swipe direction, in the lines the swipe
+actually changed.
 
-The board SHALL still report every empty position; the restriction is the mode's rule, not the board's.
+The board SHALL still report every empty position. The restriction belongs to
+the spawn variant and is supplied with the swipe trace as context; the variant
+does not record swipe state itself.
 
 #### Scenario: Only the opposite edge is offered
-- **WHEN** the player swipes left and the placement candidate set is queried
+- **WHEN** the player swipes left and the Threes candidate set is queried
 - **THEN** every offered position lies on the right edge
 - **THEN** every offered position lies in a row the swipe changed
 
 #### Scenario: The board still reports all empties
-- **WHEN** the board's spawn space is queried directly under the Threes rule
-- **THEN** it reports every empty position, including those the mode will not offer
+- **WHEN** the board's spawn space is queried directly under the threshold-3 rule
+- **THEN** it reports every empty position, including those the variant will not offer
 
 #### Scenario: The opening card is not edge-constrained
 - **WHEN** a Threes game is created and its opening card is placed
@@ -92,35 +109,71 @@ The board SHALL still report every empty position; the restriction is the mode's
 - **THEN** the swipe is not in the board's available swipes
 - **THEN** no placement follows
 
-### Requirement: Threes is created as its own mode
+### Requirement: Threes scores by tile rarity
 
-The system SHALL create a Threes game as a mode that holds a deck and an entry rule, and SHALL NOT express it as the 2048 single-player mode with a flag.
+The system SHALL report a Threes score as the sum of the rarity values of the
+tiles on the board.
 
-#### Scenario: A Threes game holds the Threes rule and the deck
-- **WHEN** a Threes game is created
-- **THEN** its slots hold boards carrying `Rule::Threes`
-- **THEN** its mode holds the deck and the entry rule
+The rarity SHALL be zero for 1 and 2, and SHALL be `3^(k + 1)` for a tile
+`3 * 2^k`: 3 → 3, 6 → 9, 12 → 27, 24 → 81.
 
-#### Scenario: The 2048 mode is unchanged
-- **WHEN** a 2048 game is created
-- **THEN** its slots hold boards carrying `Rule::EqualTiles`
-- **THEN** its mode holds spawn weights and a spawn count, not a deck
+The score SHALL be computed by the spawn variant from the board, not stored on
+the board and not reported as an action delta.
 
-### Requirement: Tile rules and game modes compose independently
+#### Scenario: A merge raises the rarity total
+- **WHEN** two 3 tiles merge into a 6
+- **THEN** a 6 contributes 9 to the score, not its face value
+- **THEN** the slot's score is the rarity total of the resulting board
 
-The system SHALL treat the tile rule and the game mode as independent choices at creation, so any rule can be played under any mode.
+#### Scenario: Color tiles score nothing
+- **WHEN** a board holds 1 and 2 tiles
+- **THEN** those tiles contribute nothing to the rarity score
 
-#### Scenario: 2048 with Threes tiles
-- **WHEN** a game is created with the `Single` mode and `Rule::Threes`
-- **THEN** it uses the 2048 seating and spawn policy
-- **THEN** its tiles merge and score by the Threes rule
+#### Scenario: The formula is pure
+- **WHEN** two games reach boards with identical content
+- **THEN** the Threes formula returns the same score for both
+- **THEN** no history beyond the board is required
 
-#### Scenario: Threes with 2048 tiles
-- **WHEN** a game is created with the `Threes` mode and `Rule::EqualTiles`
-- **THEN** it uses the deck and opposite-edge entry rule
-- **THEN** its tiles merge and score by the equal-tiles rule
+### Requirement: Threes is a variant, not a mode
 
-#### Scenario: The rule is part of the board's address
-- **WHEN** two games hold the same cell values under different rules
-- **THEN** their boards receive different addresses
+The system SHALL select Threes as a spawn variant on any game mode, and SHALL
+NOT create a separate Threes game mode or a separate Threes board type.
+
+The variant SHALL supply the deck, the opposite-edge placement, and the rarity
+formula. The mode SHALL supply only its seating, obligations, and spawn scope.
+
+#### Scenario: A Threes single-player game
+- **WHEN** a single-player game is created with the Threes variant
+- **THEN** its board uses the threshold-3 merge
+- **THEN** its spawn variant holds a deck and offers opposite-edge placements
+- **THEN** its seating and opening spawn are the single-player mode's
+
+#### Scenario: A Threes Survival Race
+- **WHEN** Survival Race is created with the Threes variant
+- **THEN** every slot uses the threshold-3 merge and the Threes spawn variant
+- **THEN** the race seating and fairness policy are unchanged
+
+#### Scenario: A Classic Crossfire
+- **WHEN** Crossfire is created with the Classic variant
+- **THEN** every slot uses the threshold-2 merge and the Classic spawn variant
+- **THEN** the Crossfire target strategy is unchanged
+
+### Requirement: The variant composes with any mode and any threshold
+
+The system SHALL treat the spawn variant and the merge threshold as independent
+choices at creation, so a mode can run Classic spawning with a custom threshold
+or Threes spawning with the Classic threshold.
+
+#### Scenario: Classic spawning with a custom threshold
+- **WHEN** a game is created with the Classic variant and threshold 4
+- **THEN** it uses weighted 2/4 spawning and the threshold-4 merge
+
+#### Scenario: Threes spawning with the Classic threshold
+- **WHEN** a game is created with the Threes variant and threshold 2
+- **THEN** it uses the deck and opposite-edge placement
+- **THEN** its merges follow the equal-tile rule
+
+#### Scenario: The merge threshold is part of board identity
+- **WHEN** two games hold the same cell values under different thresholds
+- **THEN** their boards receive different graph addresses
 - **THEN** both can coexist in one graph

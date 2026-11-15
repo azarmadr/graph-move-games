@@ -1,68 +1,99 @@
 ## Purpose
 
-Defines the per-board contract: what a board reports about the actions available to it, how an action applies to it, and how its grid operations and tile rule compose. A board reports what exists, never what is due — it holds no knowledge of game modes, seats, players, or randomness.
+Defines the per-board contract: a board is a grid of natural numeric tiles, a
+merge threshold supplied by the game, and the board-level actions of swiping
+and placing. A board reports what exists, never what is due. It holds no
+rule value, no game mode, no seat, no score, and no random source.
 
 ## ADDED Requirements
 
-### Requirement: A board is a grid plus a merge rule
+### Requirement: A board is content and geometry only
 
-The system SHALL build the tile-sliding board from a reusable `Grid` that owns every grid operation and a `MergeRule` that decides how two tiles merge and how a swipe scores.
+The system SHALL represent a board as a grid of natural-number tiles with no
+embedded merge rule, no game mode, no spawn policy, no score, and no random
+source.
 
-The grid SHALL provide positions, rows, columns, lines, emptiness, and sliding, and SHALL NOT depend on any particular tile rule or game mode.
+The merge threshold SHALL be supplied by the caller for every operation whose
+result depends on it. The board SHALL remain a single concrete numeric value
+that the graph can store, compare, hash, and serialize.
 
-#### Scenario: The same grid serves both rules
-- **WHEN** a board with the equal-tiles rule and a board with the Threes rule are created
-- **THEN** both use the same grid implementation
-- **THEN** they differ only in their merge rule
+#### Scenario: The board carries no rule
+- **WHEN** a board is inspected
+- **THEN** it contains only its dimensions and occupied cells
+- **THEN** it contains no rule, threshold, deck, spawn configuration, score, or mode
 
-#### Scenario: The grid knows no game rules
+#### Scenario: The same board plays under two thresholds
+- **WHEN** the same board value is swiped with two different merge thresholds
+- **THEN** each call uses the threshold it was given
+- **THEN** the board value itself is unchanged by either call
+
+### Requirement: The grid is a separate geometry contract
+
+The system SHALL provide a grid abstraction that owns positions, dimensions,
+line iteration, emptiness, and sliding, and SHALL NOT make the board generic
+over the grid implementation.
+
+The grid SHALL consult no merge rule, score, deck, or mode.
+
+#### Scenario: A grid operation is rule-agnostic
 - **WHEN** a grid operation is invoked
 - **THEN** it performs only a positional or structural operation
-- **THEN** it consults no merge rule, score table, deck, or mode
+- **THEN** it consults no merge threshold, score table, deck, or mode
 
-### Requirement: The merge rule decides whether two tiles merge
+#### Scenario: The board uses the concrete grid
+- **WHEN** a numeric board is created
+- **THEN** it holds the repository's dense grid implementation
+- **THEN** the board type is not parameterized by a grid type
 
-The system SHALL ask the board's merge rule whether two adjacent tiles combine, and SHALL use the rule's result when sliding.
+#### Scenario: Sliding preserves reading order
+- **WHEN** a grid slides tiles toward the right or downward
+- **THEN** a pair offered to the merge operation is ordered left-before-right or upper-before-lower
+- **THEN** the direction decides where a result lands, not the operand order
 
-#### Scenario: Equal tiles merge under the equal-tiles rule
-- **WHEN** two equal tiles meet under the equal-tiles rule
-- **THEN** the rule reports their sum as the merged tile
+### Requirement: The merge threshold decides whether two tiles merge
 
-#### Scenario: A one and a two merge under the Threes rule
-- **WHEN** a 1 and a 2 meet under the Threes rule
-- **THEN** the rule reports 3 as the merged tile
+The system SHALL merge two tiles according to the configured threshold `x`:
 
-#### Scenario: Ones do not merge under the Threes rule
-- **WHEN** two 1 tiles meet under the Threes rule
-- **THEN** the rule reports that they do not merge
+- when both tiles are below `x`, they merge only if they differ and their sum is at most `x`;
+- otherwise, they merge only if they are equal.
 
-### Requirement: Board reports its content address
+#### Scenario: Classic threshold
+- **WHEN** the threshold is 2 and two 2 tiles meet
+- **THEN** they merge into 4
+- **THEN** a 1 and any other tile do not merge
 
-The system SHALL report a content address for a board derived from its tile rule and its content, so that a slot can point at a graph node without the board carrying one.
+#### Scenario: Threes threshold
+- **WHEN** the threshold is 3 and a 1 and a 2 meet
+- **THEN** they merge into 3
+- **THEN** two 1 tiles do not merge
+- **THEN** two 2 tiles do not merge
 
-#### Scenario: Identical content under the same rule reports the same address
-- **WHEN** two boards with identical content and the same rule report their addresses
-- **THEN** both addresses are equal
+#### Scenario: Equal tiles at or above the threshold merge
+- **WHEN** the threshold is 3 and two 3 tiles meet
+- **THEN** they merge into 6
+- **THEN** two 6 tiles merge into 12
 
-#### Scenario: Different content reports a different address
-- **WHEN** two boards differ in any cell
-- **THEN** their reported addresses differ
+#### Scenario: A higher threshold admits more low pairs
+- **WHEN** the threshold is 4 and a 1 and a 3 meet
+- **THEN** they merge into 4
+- **THEN** a 2 and a 3 do not merge because their sum exceeds the threshold
 
-#### Scenario: Two tile rules never share an address
-- **WHEN** two boards hold the same cell values under different rules
-- **THEN** their reported addresses differ
-- **THEN** both can be stored in the same graph without collision
+#### Scenario: A tile produced by a merge does not merge again in the same swipe
+- **WHEN** a swipe produces a merged tile and an equal tile is adjacent to it
+- **THEN** the produced tile does not merge again during that swipe
 
-### Requirement: Board reports available swipes
+### Requirement: Board reports exactly the available swipes
 
-The system SHALL report exactly the swipe directions that would change a given board, and no others.
+The system SHALL report, for a given board and merge threshold, exactly the
+swipe directions that would change the board, and no others.
 
-A swipe direction is available if and only if applying it produces a board with different content.
+A swipe direction is available if and only if applying it with that threshold
+produces a board with different content.
 
 #### Scenario: Reported swipes are exactly the effective ones
-- **WHEN** a board's available swipes are queried
-- **THEN** every reported direction produces a board with different content when applied
-- **THEN** every direction that would produce a board with different content is reported
+- **WHEN** a board's available swipes are queried with a threshold
+- **THEN** every reported direction produces a different board when applied with that threshold
+- **THEN** every direction that would produce a different board is reported
 
 #### Scenario: A board that can only slide rightward reports Right
 - **WHEN** a board's only legal change is a tile sliding toward a higher column index
@@ -80,9 +111,10 @@ A swipe direction is available if and only if applying it produces a board with 
 
 ### Requirement: Board reports its spawn space
 
-The system SHALL report, for a board, the positions where a tile could be placed.
+The system SHALL report, for a board, every empty position where a tile could
+be placed, in a stable order.
 
-Positions are reported in a stable order so that an index into the list identifies the same position across repeated queries on an unchanged board. Tile values are not the board's business: the caller draws a value from the match's spawn configuration, never from the board.
+Tile values are not the board's business: the spawn variant supplies them.
 
 #### Scenario: Spawn positions are empty cells
 - **WHEN** a board's spawn space is queried
@@ -97,14 +129,16 @@ Positions are reported in a stable order so that an index into the list identifi
 - **WHEN** a board has no empty positions
 - **THEN** the reported spawn space contains no positions
 
-### Requirement: Action application is free of any random source
+### Requirement: Action application is pure and random-free
 
-The system SHALL apply an action to a board as a pure function of the board and the action, drawing no randomness from any source.
+The system SHALL apply an action to a board as a pure function of the board,
+the action, and the merge threshold, drawing no randomness from any source.
 
-Randomness required to choose an action is supplied by the caller, never held by the board.
+Randomness required to choose an action is supplied by the caller, never held
+by the board.
 
 #### Scenario: Identical inputs produce identical results
-- **WHEN** the same action is applied to two boards with identical content
+- **WHEN** the same action is applied to two boards with identical content under the same threshold
 - **THEN** both produce boards with identical content
 
 #### Scenario: Applying a swipe does not place a tile
@@ -117,29 +151,15 @@ Randomness required to choose an action is supplied by the caller, never held by
 - **THEN** exactly those cells are set on the resulting board to the given tile values
 - **THEN** no other cell changes
 
-### Requirement: Applying an action reports how the score changes
-
-The system SHALL report, for an applied action, whether the running score should be increased by an amount or replaced by an amount, so the caller can maintain the score without knowing the board's scoring rule.
-
-#### Scenario: A 2048 merge adds its value
-- **WHEN** a 2048 swipe merges tiles
-- **THEN** the reported change is an addition equal to the sum of the values of the tiles produced by merging
-
-#### Scenario: A Threes merge replaces the score from the board
-- **WHEN** a Threes swipe merges tiles
-- **THEN** the reported change is a replacement whose value is the Threes rarity score of the resulting board
-
-#### Scenario: A 2048 swipe with no merge adds nothing
-- **WHEN** a 2048 swipe slides tiles without merging any
-- **THEN** the reported change is an addition of zero
-
-#### Scenario: A placement changes no score
-- **WHEN** a placement action is applied to a board
-- **THEN** the reported change is an addition of zero
+#### Scenario: A swipe that changes nothing is rejected
+- **WHEN** a swipe direction would not move or merge any tile
+- **THEN** applying it reports an invalid action
+- **THEN** the board is unchanged
 
 ### Requirement: Termination is equivalent to having no available swipe
 
-The system SHALL report a board as terminated if and only if it reports no available swipes.
+The system SHALL report a board as terminated, under a given merge threshold,
+if and only if it reports no available swipes under that threshold.
 
 #### Scenario: A terminated board reports no swipes
 - **WHEN** a board has no available swipes
@@ -154,7 +174,9 @@ The system SHALL report a board as terminated if and only if it reports no avail
 
 The system SHALL report no spawn positions for a terminated board.
 
-A board with at least one tile and at least one empty position always admits a slide, so termination implies the board is full. The converse does not hold: a full board may still admit a merge.
+A board with at least one tile and at least one empty position always admits a
+slide, so termination implies the board is full. The converse does not hold: a
+full board may still admit a merge.
 
 #### Scenario: Termination implies no empty positions
 - **WHEN** a board is reported as terminated
@@ -168,3 +190,21 @@ A board with at least one tile and at least one empty position always admits a s
 #### Scenario: A board with an empty position and a tile is never terminated
 - **WHEN** a board has at least one tile and at least one empty position
 - **THEN** the board is not reported as terminated
+
+### Requirement: The board reports no score
+
+The system SHALL NOT compute, store, or report a score on a board or as part of
+an action application.
+
+Score SHALL be derived by the spawn variant from the resulting board and the
+spawn record, so that the board remains a pure content value.
+
+#### Scenario: Applying an action reports only the resulting board
+- **WHEN** a swipe or placement is applied
+- **THEN** the result contains the resulting board and no score delta
+- **THEN** the caller obtains the score from the spawn variant when it needs one
+
+#### Scenario: One board supports two score formulas
+- **WHEN** the same board content is scored by the Classic and Threes formulas
+- **THEN** the board is not modified or annotated by either formula
+- **THEN** each formula returns its own value
