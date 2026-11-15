@@ -1,14 +1,58 @@
 ## Purpose
 
-Defines the game-level contract for composing boards under seats, agents, and obligations, so that any number of boards and players can be driven through a single interface and no gameplay is a special case.
+Defines the game-level contract: one first-class `Game` owns a first-class
+`Table` of slots, seats, obligations, and agents, and drives every mode through
+the same board trait. There is no parallel gameplay trait and no special-case
+single-player path.
 
 ## ADDED Requirements
 
+### Requirement: The game is one first-class structure
+
+The system SHALL represent a match as one concrete game value that owns its
+table, configuration, spawn variant, and mode wiring.
+
+The system SHALL NOT require a separate gameplay trait, a generic game wrapper,
+or a mode-tagged enum at the storage boundary.
+
+#### Scenario: One game value holds the match
+- **WHEN** a match is inspected
+- **THEN** it owns its table, config, spawn variant, history, and last swipe
+- **THEN** its mode-specific state is private to the game
+
+#### Scenario: Adding a mode does not add a public abstraction
+- **WHEN** a new mode is added
+- **THEN** its seating and obligation wiring are added to the game
+- **THEN** no existing public trait or generic wrapper changes
+
+### Requirement: The table is first-class shared state
+
+The system SHALL model the match table as a first-class value containing the
+board slots, seats, open obligations, agents, the round, and the seats that
+have acted in the round.
+
+Configuration and the spawn variant SHALL live on the game, not on a mode, so
+every mode receives the same dimensions, merge threshold, value source, and
+spawn count.
+
+#### Scenario: Every mode receives the shared config
+- **WHEN** any mode is created
+- **THEN** its game holds one config and one spawn variant
+- **THEN** no mode keeps a second copy of dimensions, merge, deck, weights, or count
+
+#### Scenario: Mode state is only what differs
+- **WHEN** a Race and a Crossfire are compared
+- **THEN** their tables have the same shape
+- **THEN** their different state is limited to the Race fairness policy and the Crossfire target cursors
+
 ### Requirement: A seat binds an agent to a set of board slots
 
-The system SHALL model participation as seats, where each seat binds an agent to one or more board slots.
+The system SHALL model participation as seats, where each seat binds an agent
+to one or more board slots.
 
-The set of board slots a seat covers is that seat's scope. What the seat owes is carried by an obligation, not by the seat: an obligation names the action kind (`Swipe` or `Place`) it requires.
+The set of board slots a seat covers is that seat's scope. What the seat owes
+is carried by an obligation, not by the seat: an obligation names the action
+kind (`Swipe` or `Place`) it requires.
 
 #### Scenario: A seat that owes a swipe covers a single board slot
 - **WHEN** a mode creates a swipe obligation against a seat
@@ -24,14 +68,16 @@ The set of board slots a seat covers is that seat's scope. What the seat owes is
 - **THEN** each seat reports its own scope independently
 - **THEN** each obligation reports its own action kind
 
-### Requirement: Board slots are local to the mode
+### Requirement: Board slots are local to the game
 
-The system SHALL address the boards a mode operates on by identifiers local to that mode, distinct from the content-addressed identifiers of the graph store.
+The system SHALL address the boards a match operates on by identifiers local to
+that match, distinct from the content-addressed identifiers of the graph store.
 
-A board slot identifies a position within a mode; the content-addressed identifier identifies a board's content wherever it occurs.
+A board slot identifies a position within a match; the content-addressed
+identifier identifies board content and its merge threshold wherever it occurs.
 
 #### Scenario: Two slots may hold the same board content
-- **WHEN** two board slots of a mode currently hold boards with identical content
+- **WHEN** two board slots currently hold boards with identical content and threshold
 - **THEN** the slots remain distinguishable from one another
 - **THEN** both resolve to the same content-addressed identifier
 
@@ -40,13 +86,18 @@ A board slot identifies a position within a mode; the content-addressed identifi
 - **THEN** the slot's identifier is unchanged
 - **THEN** the content-addressed identifier it resolves to changes
 
-### Requirement: Available choices come from the board trait, not from the mode
+### Requirement: Available choices come from the board trait
 
-The system SHALL derive what a seat may choose next from the board reports of the boards in that seat's scope, and SHALL NOT enumerate complete actions.
+The system SHALL derive what a seat may choose next from the board reports of
+the boards in that seat's scope, and SHALL NOT enumerate complete actions.
 
-A mode depends on its boards through the board trait; the compiler-enforced connection means a mode that is not built on boards reporting their own facts does not compile. The seat's scope and its open obligations filter what the boards report — the boards say what exists, the obligation says what is due, and the seat's scope says where it applies.
+The boards say what exists (`valid_swipes`, `spawn_space`), the obligation says
+what is due, and the seat's scope or the obligation's target says where it
+applies. The game holds no separate list that could disagree with the boards.
 
-For a seat that must produce several placements in one action, the system SHALL report the candidates for the next placement given the choices already made, rather than the combinations those choices could become.
+For a seat that must produce several placements in one action, the system SHALL
+report the candidates for the next placement given the choices already made,
+rather than the combinations those choices could become.
 
 #### Scenario: A seat with no open obligation reports no choice
 - **WHEN** a seat holds no obligation that is currently due
@@ -56,28 +107,30 @@ For a seat that must produce several placements in one action, the system SHALL 
 - **WHEN** a seat's scope covers more than one board slot
 - **THEN** the choices reported for that seat account for the state of every slot in the scope
 
-#### Scenario: The mode holds no independent list
+#### Scenario: The game holds no independent list
 - **WHEN** a board's reports change after an action is applied
 - **THEN** the choices available to a seat over that board change accordingly
-- **THEN** the mode holds no separate list that could disagree with the board's reports
+- **THEN** the game holds no separate list that could disagree with the board's reports
 
 #### Scenario: Several placements do not multiply the reported choices
 - **WHEN** a seat must place several tiles in one action
 - **THEN** the choices reported are the positions admissible for the next placement given those already chosen
 - **THEN** the number of reported choices does not grow with the number of placements remaining
 
-### Requirement: The trait exposes seating and obligations
+### Requirement: Seating and obligations are readable
 
-The system SHALL expose a mode's seat table and its open obligations through the mode's own interface, rather than keeping them hidden inside an implementation.
+The system SHALL expose a game's seat table and its open obligations.
 
-A seat entry reports the agent that fills it and its scope. An obligation reports the seat that owes it, the action kind it requires, its target, and when it resolves.
+A seat entry reports the agent that fills it and its scope. An obligation
+reports the seat that owes it, the action kind it requires, its target, and
+when it resolves.
 
 #### Scenario: The seat table is readable
-- **WHEN** a mode's seats are queried
+- **WHEN** a game's seats are queried
 - **THEN** each reported seat identifies its agent and the board slots in its scope
 
 #### Scenario: Open obligations are readable
-- **WHEN** a mode's obligations are queried
+- **WHEN** a game's obligations are queried
 - **THEN** each reported obligation identifies the seat that owes it, the action kind it requires, and its target
 
 #### Scenario: An agent may hold seats on several boards
@@ -87,9 +140,11 @@ A seat entry reports the agent that fills it and its scope. An obligation report
 
 ### Requirement: Applying an action has an immediate and a deferred effect
 
-The system SHALL apply an action so that its effect on the boards in scope is immediate, and so that it may additionally create obligations on other seats.
+The system SHALL apply an action so that its effect on the boards in scope is
+immediate, and so that it may additionally create obligations on other seats.
 
-The boards transitioned by an action are those in the acting seat's scope. An obligation is a duty that a named seat has acquired and must perform.
+The boards transitioned by an action are those in the acting seat's scope. An
+obligation is a duty that a named seat has acquired and must perform.
 
 #### Scenario: The acting seat's boards transition immediately
 - **WHEN** a seat applies an action
@@ -106,11 +161,19 @@ The boards transitioned by an action are those in the acting seat's scope. An ob
 
 ### Requirement: When an obligation resolves is configurable
 
-The system SHALL resolve each obligation either immediately after the action that creates it or only after every seat owing the relevant action and still able to act has applied its action for the round, as configured for that obligation.
+The system SHALL resolve each obligation either immediately after the action
+that creates it or only after every seat owing the relevant action and still
+able to act has applied its action for the round, as configured for that
+obligation.
 
-Timing is an option of the match configuration, not a property of a mode: each mode ships a default, and a match may override it.
+Timing is an option of the match configuration, not a property of a mode: each
+mode ships a default, and a match may override it.
 
-An immediate obligation lands the moment it is created — a counterattack does not wait for the other players to swipe. A deferred obligation is held until the round's relevant seats have all acted, because its effect must be computed against the final state of every board it touches. A seat whose scope contains no board it can act on is not counted: it can never act again, and counting it would hold the round open forever.
+An immediate obligation lands the moment it is created. A deferred obligation
+is held until the round's relevant seats have all acted, because its effect
+must be computed against the final state of every board it touches. A seat
+whose scope contains no board it can act on is not counted: it can never act
+again, and counting it would hold the round open forever.
 
 #### Scenario: An immediate obligation lands at once
 - **WHEN** a mode declares a created obligation as immediate
@@ -151,15 +214,16 @@ The system SHALL report the seats that currently hold an unresolved obligation.
 
 ### Requirement: Match outcome is reported once play has concluded
 
-The system SHALL report whether the match has concluded, and when it has, which player won.
+The system SHALL report whether the match has concluded, and when it has, which
+player won, using the scores derived from the boards and spawn credit.
 
-A match concludes when no seat holds any further action.
+A match concludes when no slot admits a further swipe.
 
 #### Scenario: A match in progress has no outcome
-- **WHEN** at least one seat still holds an action
+- **WHEN** at least one slot admits a swipe
 - **THEN** the match is reported as not concluded
 
 #### Scenario: A concluded match reports a winner
-- **WHEN** no seat holds any further action
+- **WHEN** no slot admits a swipe
 - **THEN** the match is reported as concluded
-- **THEN** the outcome identifies the winning player, or reports a draw
+- **THEN** the outcome identifies the player with the highest derived score, or reports a draw

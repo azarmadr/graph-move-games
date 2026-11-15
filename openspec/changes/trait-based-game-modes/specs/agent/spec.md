@@ -45,6 +45,11 @@ The system SHALL require that any random source an agent depends upon is held by
 - **WHEN** an agent produces an action that requires a random choice
 - **THEN** the choice is drawn from the agent's own random source
 
+#### Scenario: The spawn variant draws values through the agent's random source
+- **WHEN** a Classic spawn draws a tile value for a placement seat
+- **THEN** the draw is taken from the random source of the agent filling that seat
+- **THEN** the spawn variant holds no random source of its own
+
 ### Requirement: Agent state is part of exported match state
 
 The system SHALL include the state of every agent filling a seat when the match state is exported, and SHALL restore it on import.
