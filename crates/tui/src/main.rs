@@ -2,16 +2,16 @@ use {
     crossterm::{
         event::{self, Event, KeyCode, KeyEventKind},
         execute,
-        terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+        terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     },
     game_core::*,
     ratatui::{
-        Frame, Terminal,
         backend::CrosstermBackend,
         layout::{Alignment, Constraint, Layout},
         style::{Color, Modifier, Style},
         text::{Line, Span},
         widgets::{Block, Borders, Paragraph},
+        Frame, Terminal,
     },
     std::io,
 };

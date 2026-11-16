@@ -1,22 +1,17 @@
 use {
-    crate::{Direction, hash::Fnv1a},
+    crate::grid::Pos,
     grid::Grid,
     serde::{Deserialize, Serialize},
 };
 
 mod move_logic;
-mod spawn;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct Pos {
-    pub r: u8,
-    pub c: u8,
-}
-
-impl Pos {
-    pub fn new(r: u8, c: u8) -> Self {
-        Self { r, c }
-    }
+pub enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -124,29 +119,13 @@ impl Board {
         self.tiles[(r.into(), c.into())] = tile;
     }
 
-    /// Hashable canonical representation used for content-addressed IDs.
-    pub(crate) fn hash_content(&self, hasher: &mut Fnv1a) {
-        hasher.write_u8(self.tiles.rows() as u8);
-        hasher.write_u8(self.tiles.cols() as u8);
-        for (r, row) in self.tiles.iter_rows().enumerate() {
-            for (c, &tile) in row.enumerate() {
-                if tile == 0 {
-                    continue;
-                }
-                hasher.write_u8(r as u8);
-                hasher.write_u8(c as u8);
-                hasher.write_u32(tile);
-            }
-        }
-    }
-
     /// Returns directions that produce a valid move from this board.
     ///
     /// A line changes when a tile can slide toward the direction, or when two
     /// tiles that become adjacent after compacting are equal. Scans the line
     /// in place: no board clone and no per-line allocation.
     pub fn valid_moves(&self) -> Vec<Direction> {
-        use crate::Direction::*;
+        use Direction::*;
 
         fn line_moves(line: impl Iterator<Item = u32>) -> bool {
             let mut seen_zero = false;
@@ -197,7 +176,7 @@ impl Board {
 
 #[cfg(test)]
 mod valid_moves_tests {
-    use {super::*, crate::Direction, grid::Grid, std::collections::HashSet};
+    use {super::*, grid::Grid, std::collections::HashSet};
 
     const ALL: [Direction; 4] = [
         Direction::Up,

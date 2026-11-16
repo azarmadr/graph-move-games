@@ -1,5 +1,8 @@
+mod hash;
+pub mod ids;
+
 use {
-    crate::{Board, types::*},
+    crate::{Board, Cell, Direction},
     petgraph::{
         graph::{DiGraph, EdgeIndex, NodeIndex},
         visit::EdgeRef,
@@ -7,6 +10,27 @@ use {
     serde::{Deserialize, Serialize},
     std::collections::HashMap,
 };
+
+pub use ids::{BoardId, EdgeId, GameId};
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Edge {
+    Move(Direction),
+    Spawn(Vec<Cell>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub from: BoardId,
+    pub to: BoardId,
+    pub kind: Edge,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphData {
+    pub nodes: HashMap<BoardId, Board>,
+    pub edges: HashMap<EdgeId, GraphEdge>,
+}
 
 /// Canonical global DAG storage.
 ///

@@ -1,7 +1,7 @@
 use {
-    crate::{Board, Cell, hash::Fnv1a},
+    super::{hash::Fnv1a, Edge},
+    crate::{Board, Direction},
     serde::{Deserialize, Serialize},
-    std::collections::HashMap,
 };
 
 macro_rules! strong_id {
@@ -44,12 +44,28 @@ id_string_serde!(BoardId);
 id_string_serde!(EdgeId);
 id_string_serde!(GameId);
 
+/// Hashable canonical representation used for content-addressed IDs.
+fn hash_board(board: &Board, hasher: &mut Fnv1a) {
+    hasher.write_u8(board.tiles.rows() as u8);
+    hasher.write_u8(board.tiles.cols() as u8);
+    for (r, row) in board.tiles.iter_rows().enumerate() {
+        for (c, &tile) in row.enumerate() {
+            if tile == 0 {
+                continue;
+            }
+            hasher.write_u8(r as u8);
+            hasher.write_u8(c as u8);
+            hasher.write_u32(tile);
+        }
+    }
+}
+
 impl BoardId {
     /// Content-addressed ID: hash of the board content only.
     /// All board states are globally deduplicated by this ID.
     pub fn from_board(board: &Board) -> Self {
         let mut h = Fnv1a::new();
-        board.hash_content(&mut h);
+        hash_board(board, &mut h);
         Self(h.finish())
     }
 }
@@ -87,85 +103,6 @@ impl GameId {
     /// Deterministic hash of a creation nonce. Exported alongside the games so
     /// new games after import never collide with imported ones.
     pub fn from_nonce(nonce: u64) -> Self {
-        Self(crate::hash::hash_u64(nonce))
+        Self(super::hash::hash_u64(nonce))
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Edge {
-    Move(Direction),
-    Spawn(Vec<Cell>),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphEdge {
-    pub from: BoardId,
-    pub to: BoardId,
-    pub kind: Edge,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GraphData {
-    pub nodes: HashMap<BoardId, Board>,
-    pub edges: HashMap<EdgeId, GraphEdge>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GameInstance {
-    pub id: GameId,
-    pub source_board_id: BoardId,
-    pub current_board_id: BoardId,
-    pub score: u64,
-    pub is_terminated: bool,
-    pub config: GameConfig,
-}
-
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct GameState {
-    pub game: GameInstance,
-    pub active_board: Board,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SpawnConfig {
-    pub spawns: HashMap<u32, u32>,
-}
-
-impl Default for SpawnConfig {
-    fn default() -> Self {
-        Self {
-            spawns: HashMap::from([(2, 1)]),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
-pub struct GameConfig {
-    pub rows: u8,
-    pub cols: u8,
-    pub spawn_config: SpawnConfig,
-}
-
-impl Default for GameConfig {
-    fn default() -> Self {
-        Self {
-            rows: 3,
-            cols: 3,
-            spawn_config: SpawnConfig::default(),
-        }
-    }
-}
-
-#[derive(Debug, Serialize)]
-pub struct ImportResult {
-    pub success: bool,
-    pub games: Vec<GameState>,
 }

@@ -3,6 +3,8 @@
 //! We use FNV-1a instead of std::hash::DefaultHasher because its output is stable
 //! across Rust versions and platforms, which is important for import/export
 //! consistency.
+//!
+//! Only the graph addresses content, so this hasher stays inside `graph`.
 
 #[derive(Debug, Clone, Copy)]
 pub struct Fnv1a(u64);

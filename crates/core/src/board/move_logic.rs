@@ -1,4 +1,4 @@
-use {super::Board, crate::types::Direction};
+use super::{Board, Direction};
 
 impl Board {
     /// Resolve a merge-only move (no spawning).

@@ -1,8 +1,64 @@
 use {
-    crate::{Board, Direction, graph::GraphStore, types::*},
+    crate::{
+        graph::{BoardId, Edge, GameId, GraphData, GraphStore},
+        Board, Cell, Direction,
+    },
+    rand::RngExt,
     serde::{Deserialize, Serialize},
     std::collections::HashMap,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpawnConfig {
+    pub spawns: HashMap<u32, u32>,
+}
+
+impl Default for SpawnConfig {
+    fn default() -> Self {
+        Self {
+            spawns: HashMap::from([(2, 1)]),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Deserialize, Serialize)]
+pub struct GameConfig {
+    pub rows: u8,
+    pub cols: u8,
+    pub spawn_config: SpawnConfig,
+}
+
+impl Default for GameConfig {
+    fn default() -> Self {
+        Self {
+            rows: 3,
+            cols: 3,
+            spawn_config: SpawnConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameInstance {
+    pub id: GameId,
+    pub source_board_id: BoardId,
+    pub current_board_id: BoardId,
+    pub score: u64,
+    pub is_terminated: bool,
+    pub config: GameConfig,
+}
+
+#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GameState {
+    pub game: GameInstance,
+    pub active_board: Board,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ImportResult {
+    pub success: bool,
+    pub games: Vec<GameState>,
+}
 
 #[derive(Serialize, Debug, Deserialize)]
 pub struct Engine {
@@ -41,7 +97,7 @@ impl Engine {
     pub fn _create_game_with_board(&mut self, board: Board) -> Result<GameState, String> {
         let game_id = GameId::from_nonce(self.next_game_nonce);
         self.next_game_nonce += 1;
-        let (rows, cols) = board.tiles.size();
+        let (rows, cols) = board.size();
         self.create_game_with_board_inner(
             game_id,
             board,
@@ -202,9 +258,76 @@ impl Engine {
     }
 }
 
+impl Board {
+    /// Sample one spawn outcome for the given board.
+    ///
+    /// The randomness is generated inside Rust/WASM. The frontend does not provide
+    /// a seed or random value. The empty position is selected uniformly, and tile
+    /// values are selected according to the configured integer weights.
+    pub fn sample_spawn(&self, config: &SpawnConfig) -> Result<Vec<Cell>, String> {
+        let empties = self.empty_positions();
+        if empties.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let pos = random_item(&empties)?;
+        let tile = weighted_tile(config)?;
+
+        Ok(vec![Cell::new(pos.0 as u8, pos.1 as u8, tile)])
+    }
+
+    pub(crate) fn spawn(&mut self, config: &SpawnConfig) -> Result<Vec<Cell>, String> {
+        let spawn_cells = self.sample_spawn(config)?;
+        for cell in &spawn_cells {
+            self.set(cell.pos.r, cell.pos.c, cell.tile);
+        }
+        Ok(spawn_cells)
+    }
+}
+
+fn random_item<T: Clone>(items: &[T]) -> Result<T, String> {
+    if items.is_empty() {
+        return Err("cannot choose a random item from an empty list".to_string());
+    }
+
+    let mut rng = rand::rng();
+    Ok(items[rng.random_range(0..items.len())].clone())
+}
+
+fn weighted_tile(config: &SpawnConfig) -> Result<u32, String> {
+    let weighted: Vec<(u32, u32)> = config
+        .spawns
+        .iter()
+        .filter(|(_, weight)| **weight > 0)
+        .map(|(tile, weight)| (*tile, *weight))
+        .collect();
+
+    let total_weight: u64 = weighted.iter().map(|(_, weight)| u64::from(*weight)).sum();
+    if total_weight == 0 {
+        return Err("spawn_config must contain at least one positive weight".to_string());
+    }
+
+    let mut rng = rand::rng();
+    let mut pick = rng.random_range(0..total_weight);
+    for (tile, weight) in weighted {
+        let weight = u64::from(weight);
+        if pick < weight {
+            return Ok(tile);
+        }
+        pick -= weight;
+    }
+
+    Err("failed to sample a tile from spawn_config".to_string())
+}
+
 #[cfg(test)]
 mod tests {
-    use {super::*, crate::Cell, grid::grid};
+    use {
+        super::*,
+        crate::grid::Pos,
+        grid::grid,
+        std::collections::{HashMap, HashSet},
+    };
 
     #[test]
     fn test_create_game_initial_state() {
@@ -415,5 +538,86 @@ mod tests {
             2,
             "valid move should create one move + one spawn edge"
         );
+    }
+
+    #[test]
+    fn spawns_in_empty_cell() {
+        let mut board = Board::with_dim(3, 3);
+        println!("{board:?}");
+        let config = SpawnConfig {
+            spawns: HashMap::from([(2, 1)]),
+        };
+
+        let result = board.spawn(&config).unwrap();
+        println!("{board:?} {result:?}");
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].tile, 2);
+        assert!(!board
+            .empty_positions()
+            .contains(&(result[0].pos.r.into(), result[0].pos.c.into())));
+    }
+
+    #[test]
+    fn samples_one_configured_tile_in_an_empty_cell() {
+        let board = Board::with_dim(3, 3).tiles(vec![Cell::new(1, 1, 8)]);
+        let config = SpawnConfig {
+            spawns: HashMap::from([(2, 9), (4, 1)]),
+        };
+
+        for _ in 0..64 {
+            let result = board.sample_spawn(&config).unwrap();
+            assert_eq!(result.len(), 1);
+            assert!(board
+                .empty_positions()
+                .contains(&(result[0].pos.r.into(), result[0].pos.c.into())));
+            assert!(matches!(result[0].tile, 2 | 4));
+        }
+    }
+
+    #[test]
+    fn randomizes_empty_cell_selection() {
+        let board = Board::with_dim(3, 3).tiles(vec![Cell::new(1, 1, 8)]);
+        let config = SpawnConfig {
+            spawns: HashMap::from([(2, 1)]),
+        };
+        let positions: HashSet<Pos> = (0..128)
+            .map(|_| board.sample_spawn(&config).unwrap()[0].pos)
+            .collect();
+
+        assert!(positions.len() > 1, "spawn position did not vary");
+    }
+
+    #[test]
+    fn randomizes_weighted_tile_selection() {
+        let board = Board::with_dim(1, 2).tiles(vec![Cell::new(0, 0, 8)]);
+        let config = SpawnConfig {
+            spawns: HashMap::from([(2, 9), (4, 1)]),
+        };
+        let tiles: HashSet<u32> = (0..256)
+            .map(|_| board.sample_spawn(&config).unwrap()[0].tile)
+            .collect();
+
+        assert_eq!(tiles, HashSet::from([2, 4]));
+    }
+
+    #[test]
+    fn rejects_config_without_positive_weights() {
+        let board = Board::with_dim(1, 2).tiles(vec![Cell::new(0, 0, 8)]);
+        let config = SpawnConfig {
+            spawns: HashMap::from([(2, 0), (4, 0)]),
+        };
+
+        let error = board.sample_spawn(&config).unwrap_err();
+        assert!(error.contains("positive weight"));
+    }
+
+    #[test]
+    fn returns_no_spawn_when_board_is_full() {
+        let board = Board::with_dim(1, 1).tiles(vec![Cell::new(0, 0, 8)]);
+        let config = SpawnConfig {
+            spawns: HashMap::from([(2, 1)]),
+        };
+
+        assert!(board.sample_spawn(&config).unwrap().is_empty());
     }
 }
