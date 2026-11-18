@@ -28,10 +28,11 @@ solution after the first implementation pass was discarded.
   game on top of it without a second gameplay trait.
 - Make the board pure content and geometry: no rule value, no randomness, no
   score, no mode.
-- Express 2048 and Threes as one numeric board plus a configurable merge
-  threshold rather than two board types or a `Rule` enum.
-- Make spawning an explicit, spawn-only variant that owns values, positions,
-  count, and the score formula, and that never reacts to a swipe.
+- Express 2048 and Threes as one board whose `Tile` carries its kind, so merge
+  behaviour derives from the tile instead of a separate rule value.
+- Make spawning an explicit, spawn-only config that owns values, count, and the
+  score formula, and that never reacts to a swipe. Placement policy is the
+  slot's `rule`, not the config's.
 - Derive score from the board and the spawn record instead of storing a score
   or reporting score deltas.
 - Make `Game` and `Table` first-class, with config and spawn variant shared by
@@ -58,69 +59,270 @@ Every mode is the same three-stage pipeline:
 ```text
         Swipe ───────────── Board ───────────── Spawn
           │                    │                   │
-     merge threshold       content +           values
-     (game config)         geometry            positions
-                                                count
-                                                score credit
+     tile kind           geometry            values
+     (on the tile)        content            count
+                                              score credit
+                                              placement <- slot.rule
 ```
 
-- **Swipe** is a board action. The merge threshold is supplied by the game at
-  the call site; the board does not store it.
+- **Swipe** is a board action. Whether two tiles merge is decided by the kind
+  carried on each tile; no rule value is supplied at the call site.
 - **Board** is the pivot. It owns content, geometry, slide, placement, empty
   positions, and termination. It knows nothing about 2048, Threes, spawning,
   scoring, seats, or modes.
-- **Spawn** is a spawn-only variant. It owns the value source, the position
-  policy, the count, and the score formula. It is shared by every mode.
+- **Spawn** is a spawn-only config. It owns the value source, the count, and
+  the score formula. It is shared by every mode.
+- **Placement** is not the config's job. The slot's `rule` says whether a spawn
+  may use any empty cell or only the line opposite the last swipe.
 - **Score** is not a stage and not stored. It is a function of the board and
-  the spawn record, supplied by the spawn variant.
+  the spawn record, supplied by the spawn config.
 
-### Tiles: natural numbers, no enum
+### Class diagram
 
-Numeric tiles are natural `u32` values. Empty cells are `None` in the grid;
-there is no zero-tile sentinel.
+From the board up to the engine, with the corrections so far: the tile carries
+its kind, `Geometry` replaces the old grid trait, `BoardSlot` is
+`(board, rule)`, the spawn config is data only, the Threes deck is one per
+game, and ids belong to the graph.
 
-- Classic tiles: `2, 4, 8, 16, …`
-- Threes tiles: `1, 2, 3, 6, 12, 24, …`
+```mermaid
+classDiagram
+    direction TB
 
-There is no `pub enum Tile`. Adding a tile kind to an enum would force every
-numeric rule, the graph payload, and the frontend to carry a tag for a
-distinction that only matters at the board-type boundary. A later word game is
-a separate concrete board with a word tile type, implementing the same board
-trait; it does not change the numeric board.
+    class Tile {
+        <<enum>>
+        Classic(u32)
+        Threes(u32)
+    }
 
-### Grid
+    class Geometry {
+        <<trait>>
+        +rows() usize
+        +cols() usize
+        +get(pos) Option~Tile~
+        +set(pos, tile)
+        +positions() iterator
+        +empties() Vec~Pos~
+        +line(direction, index) list of cells
+        +slide(direction) Vec~Tile~
+        +is_empty() bool
+        +is_full() bool
+    }
 
-`Grid<T>` is a trait, because the repository already uses other grid
-implementations. The in-repo implementation is `DenseGrid<T>`.
+    class BoardGame {
+        <<trait>>
+        +valid_swipes() Vec~Direction~
+        +spawn_space() SpawnSpace
+        +apply(action) Result~Board, ActionError~
+        +is_terminal() bool
+    }
+
+    class Board {
+        +grid Grid
+    }
+
+    class Action {
+        <<enum>>
+        Swipe(Direction)
+        Place(Vec~Cell~)
+    }
+
+    class SpawnRule {
+        <<enum>>
+        AnyEmpty
+        OppositeLine
+    }
+
+    class BoardSlot {
+        +board Board
+        +rule SpawnRule
+    }
+
+    class GameConfig {
+        +mode ModeConfig
+        +rows u8
+        +cols u8
+        +players u8
+        +spawn SpawnConfig
+        +difficulty Difficulty
+    }
+
+    class ModeConfig {
+        <<enum>>
+        Single
+        Race(shared_spawner)
+        Crossfire(strategy)
+    }
+
+    class SpawnConfig {
+        <<enum>>
+        Classic(weights, count)
+        Threes(seed)
+    }
+
+    class Deck {
+        +cards Vec~u32~
+        +cursor usize
+    }
+
+    class ModeState {
+        <<enum>>
+        Single
+        Race(policy, shared_spawner)
+        Crossfire(cursors, strategy)
+    }
+
+    class Table {
+        +slots list of BoardSlot
+        +seats list
+        +obligations list
+        +agents list
+        +round u32
+        +acted list
+    }
+
+    class Game {
+        +id GameId
+        +config GameConfig
+        +history list
+        -table Table
+        -mode ModeState
+        +swipe(seat, direction) TurnReport
+        +place(seat, cells) TurnReport
+        +score(slot) u64
+        +outcome() Outcome
+    }
+
+    class BoardId {
+        <<content addressed>>
+        +value u64
+    }
+
+    class GameId {
+        +value u64
+    }
+
+    class Edge {
+        <<enum>>
+        Swipe(Direction)
+        Spawn(Vec~Cell~)
+    }
+
+    class GraphEdge {
+        +from BoardId
+        +to BoardId
+        +kind Edge
+    }
+
+    class GraphStore {
+        +nodes map from BoardId to Board
+        +edges map from EdgeId to GraphEdge
+    }
+
+    class GameState {
+        +game Game
+        +active_board Board
+    }
+
+    class Engine {
+        +version u32
+        -graph GraphStore
+        -games map from GameId to Game
+        -next_game_nonce u64
+        +create_game(config) GameState
+        +swipe(game, seat, direction) GameState
+        +place(game, seat, cells) GameState
+        +import(data) ImportResult
+        +get_graph() GraphData
+    }
+
+    Board ..|> Geometry
+    Board ..|> BoardGame
+    Board --> Tile : cells
+    BoardGame ..> Action
+    BoardSlot --> Board : holds
+    BoardSlot --> SpawnRule : placement
+    GameConfig --> ModeConfig : mode
+    GameConfig --> SpawnConfig : spawn
+    Game --> GameConfig : config
+    Game --> ModeState : mode state
+    Game --> Deck : Threes only, one per Game
+    Game *-- Table
+    Table --> BoardSlot : one per slot
+    Game ..> Action : one vocabulary
+    BoardId ..> Board : content hash
+    Engine *-- GraphStore
+    Engine *-- Game : many
+    Engine --> GameState : returns
+    GameState --> Game
+    GameState --> Board : active board
+    GraphStore --> Board : nodes
+    GraphStore --> GraphEdge : edges
+    GraphEdge --> Edge : kind
+    GraphEdge --> BoardId : endpoints
+
+    note for Board "grid::Grid<Option<Tile>>; None is an empty cell, no zero-tile sentinel"
+    note for BoardGame "no rule argument: the tiles answer validity; no id method, identity is a graph concern"
+    note for BoardSlot "the settled pair is (board, rule)"
+    note for SpawnRule "placement policy: AnyEmpty offers every empty cell, OppositeLine narrows to the line opposite the last swipe; type name is a proposal"
+    note for SpawnConfig "data only: weights/count or seed; value drawing and the score formula are free functions over it, not methods"
+    note for Deck "Threes runtime state, one deck per Game, cursor serializes with the game"
+    note for Table "open: what else a slot stores (credit, player, last swipe), and whether last_swipe is per Game or per slot in Race/Crossfire"
+    note for Game "carries no Rule value, no MergeRule, no GameMode trait, no CreateGame payload, and no stored score"
+```
+
+### Tiles: a kind and a value
 
 ```rust
-pub trait Grid<T: Copy> {
+pub enum Tile {
+    Classic(u32),
+    Threes(u32),
+}
+```
+
+Empty cells are `None` in the grid; there is no zero-tile sentinel.
+
+- `Classic`: `2, 4, 8, 16, ...`
+- `Threes`: `1, 2, 3, 6, 12, 24, ...`
+
+The tile **is** the kind. Merge behaviour reads it directly, so there is no
+`Rule` value on the board, no `MergeRule` struct, and no threshold threaded
+through board calls. Only these two kinds exist.
+
+A later word game is a separate concrete board with a word tile type,
+implementing the same geometry trait; it does not change the numeric board.
+
+### Geometry
+
+`Geometry` is the trait for positions, lines, and sliding. The `grid` crate
+supplies the storage; `Board` implements the trait over it. There is no
+in-repo `DenseGrid`.
+
+```rust
+pub trait Geometry {
     fn rows(&self) -> usize;
     fn cols(&self) -> usize;
-    fn get(&self, pos: Pos) -> Option<T>;
-    fn set(&mut self, pos: Pos, value: Option<T>);
+    fn get(&self, pos: Pos) -> Option<Tile>;
+    fn set(&mut self, pos: Pos, value: Option<Tile>);
 
     // provided from the four required methods
     fn positions(&self) -> impl Iterator<Item = Pos> + '_;
-    fn indexed_iter(&self) -> impl Iterator<Item = (Pos, Option<T>)> + '_;
+    fn indexed_iter(&self) -> impl Iterator<Item = (Pos, Option<Tile>)> + '_;
     fn empties(&self) -> Vec<Pos>;
-    fn line(&self, direction: Direction, index: u8) -> Vec<(Pos, Option<T>)>;
-    fn slide(&mut self, direction: Direction, merge: impl FnMut(T, T) -> Option<T>) -> Vec<T>;
+    fn line(&self, direction: Direction, index: u8) -> Vec<(Pos, Option<Tile>)>;
+    fn slide(&mut self, direction: Direction) -> Vec<Tile>;
     fn is_empty(&self) -> bool;
     fn is_full(&self) -> bool;
 }
 ```
 
-`DenseGrid<T>` stores `rows`, `cols`, and `Vec<Option<T>>`. The board holds
-`DenseGrid<u32>` concretely. There is no `Board<G: Grid<_>>`: a board is one
-value the graph can store, hash, compare, and serialize, and geometry is
-already independent of 2048/Threes.
+`Board` holds `grid::Grid<Option<Tile>>` and implements `Geometry`. There is no
+`Board<G: Geometry>`: a board is one value the graph can store, hash, compare,
+and serialize, and geometry is already independent of 2048/Threes.
 
-`slide` passes merge operands in reading order (left/upper tile first), even
-when scanning right or down. Numeric merges are commutative, so this is
-invisible today; it keeps the contract correct for the later word board.
+`slide` reads the merge kind off the tiles themselves, and passes operands in
+reading order (left/upper tile first) even when scanning right or down.
 
-### The board trait and the merge threshold
+### The board trait
 
 The board trait keeps only the methods the board itself can answer:
 
@@ -128,65 +330,37 @@ The board trait keeps only the methods the board itself can answer:
 pub(crate) trait BoardGame: Clone + Eq {
     type Action;
 
-    fn valid_swipes(&self, merge: MergeRule) -> Vec<Direction>;
+    fn valid_swipes(&self) -> Vec<Direction>;
     fn spawn_space(&self) -> SpawnSpace;
-    fn apply(&self, action: &Self::Action, merge: MergeRule) -> Result<Self, ActionError>;
-    fn is_terminal(&self, merge: MergeRule) -> bool;
+    fn apply(&self, action: &Self::Action) -> Result<Self, ActionError>;
+    fn is_terminal(&self) -> bool;
 }
 ```
 
-- `valid_swipes` and `is_terminal` take the merge threshold because validity
-  depends on whether the merge would actually change the board.
-- `spawn_space` does not: it is every empty position, in stable order.
-- `apply` is pure. It takes the threshold for a swipe and ignores it for a
-  placement. It returns the new board only; it does not report a score or the
-  produced tiles.
+- `valid_swipes` and `is_terminal` take no rule argument: whether a swipe would
+  change the board is answered by the tiles.
+- `spawn_space` is every empty position, in stable order. It is the full set;
+  the slot's `rule` narrows it when a mode needs the opposite line only.
+- `apply` is pure. It returns the new board only; it does not report a score or
+  the produced tiles.
 - There is no `id` method. Identity is a graph concern.
 
 The numeric board is:
 
 ```rust
 pub(crate) struct Board {
-    pub(crate) grid: DenseGrid<u32>,
+    pub(crate) grid: grid::Grid<Option<Tile>>,
 }
 ```
 
-It has no `rule`, no `threshold`, no deck, no score, and no RNG.
+It has no rule, no threshold, no deck, no score, and no RNG.
 
-`MergeRule` is a small value, not a board field:
+Merge is a function of the tile kind:
 
-```rust
-#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MergeRule {
-    pub split: u32,
-}
-
-impl MergeRule {
-    pub const CLASSIC: Self = Self { split: 2 };
-    pub const THREES: Self = Self { split: 3 };
-
-    pub fn merge(self, a: u32, b: u32) -> Option<u32> {
-        if a < self.split && b < self.split {
-            (a != b && a + b <= self.split).then_some(a + b)
-        } else if a == b {
-            Some(a + b)
-        } else {
-            None
-        }
-    }
-}
-```
-
-The rule is exactly the one the corrections asked for:
-
-- **Below the split**: different tiles merge, and only when their sum is at
-  most the split. With `split = 3`, `1 + 2 = 3`; `1 + 1` and `2 + 2` do not
-  merge.
-- **At or above the split**: equal tiles merge. With `split = 3`, `3 + 3 = 6`,
-  `6 + 6 = 12`; with `split = 2`, classic `2 + 2 = 4`.
-- `split = 2` is classic 2048. `split = 3` is Threes. `split = 4` admits
-  `1 + 2 = 3` and `1 + 3 = 4`, but not `2 + 3 = 5`. Any split is expressible
-  as configuration.
+- **`Classic`**: equal tiles merge. `2 + 2 = 4`, `8 + 8 = 16`.
+- **`Threes`**: below `3`, different tiles merge only when their sum is at most
+  `3` -- `1 + 2 = 3`, while `1 + 1` and `2 + 2` do not. At or above `3`, equal
+  tiles merge -- `3 + 3 = 6`, `6 + 6 = 12`.
 
 ### The spawn variant
 
